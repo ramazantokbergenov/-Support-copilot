@@ -1,0 +1,1044 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#111214">
+  <title>Support Copilot — рабочее место оператора</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #111214;
+      --panel: #191a1d;
+      --panel-raised: #202125;
+      --panel-soft: #17181a;
+      --border: #2b2c30;
+      --border-soft: #242529;
+      --text: #f0f0f1;
+      --muted: #8d8e94;
+      --subtle: #65666c;
+      --accent: #ff762d;
+      --accent-bright: #ff8b4e;
+      --accent-soft: rgba(255, 118, 45, .12);
+      --green: #63cb91;
+      --green-soft: rgba(99, 203, 145, .12);
+      --yellow: #e8ba5b;
+      --yellow-soft: rgba(232, 186, 91, .12);
+      --red: #ef7777;
+      --red-soft: rgba(239, 119, 119, .12);
+      --blue: #79a9ec;
+      --blue-soft: rgba(121, 169, 236, .12);
+      --radius: 12px;
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      font-synthesis: none;
+      text-rendering: optimizeLegibility;
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-width: 360px;
+      min-height: 100vh;
+      background:
+        radial-gradient(ellipse at 68% 0%, rgba(255, 118, 45, .055), transparent 34rem),
+        var(--bg);
+      color: var(--text);
+      font-size: 13px;
+    }
+
+    button, input, select, textarea { font: inherit; }
+    button { color: inherit; }
+    button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    .app-shell { min-height: 100vh; }
+
+    .sidebar {
+      position: fixed;
+      inset: 0 auto 0 0;
+      z-index: 5;
+      display: flex;
+      width: 224px;
+      flex-direction: column;
+      border-right: 1px solid var(--border-soft);
+      background: rgba(20, 21, 23, .96);
+      padding: 23px 15px 16px;
+    }
+
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      padding: 0 9px 24px;
+    }
+
+    .brand-mark {
+      display: grid;
+      width: 36px;
+      height: 36px;
+      place-items: center;
+      border: 1px solid rgba(255, 139, 78, .38);
+      border-radius: 11px;
+      background: linear-gradient(145deg, rgba(255, 132, 68, .2), rgba(255, 118, 45, .06));
+      color: var(--accent-bright);
+      font-size: 12px;
+      font-weight: 850;
+      letter-spacing: -.05em;
+      box-shadow: 0 0 22px rgba(255, 118, 45, .08);
+    }
+
+    .brand-name { font-size: 13px; font-weight: 750; letter-spacing: -.02em; }
+    .brand-caption { margin-top: 3px; color: var(--muted); font-size: 10px; }
+
+    .workspace-label {
+      padding: 8px 11px 9px;
+      color: var(--subtle);
+      font-size: 9px;
+      font-weight: 750;
+      letter-spacing: .12em;
+      text-transform: uppercase;
+    }
+
+    .nav-list { display: grid; gap: 4px; }
+
+    .nav-item {
+      display: flex;
+      width: 100%;
+      min-height: 40px;
+      align-items: center;
+      gap: 11px;
+      border: 1px solid transparent;
+      border-radius: 9px;
+      background: transparent;
+      color: #a7a8ad;
+      cursor: pointer;
+      padding: 0 11px;
+      text-align: left;
+      transition: background .16s ease, color .16s ease, border-color .16s ease;
+    }
+
+    .nav-item:hover { background: #222327; color: var(--text); }
+    .nav-item.active {
+      border-color: rgba(255, 118, 45, .18);
+      background: var(--accent-soft);
+      color: #ff9a65;
+    }
+    .nav-item svg { width: 17px; height: 17px; flex: none; }
+    .nav-item span { flex: 1; }
+
+    .nav-count {
+      display: grid;
+      min-width: 20px;
+      height: 20px;
+      place-items: center;
+      border-radius: 6px;
+      background: rgba(255, 118, 45, .15);
+      color: #ff9a65;
+      font-size: 10px;
+      font-weight: 700;
+    }
+
+    .sidebar-spacer { flex: 1; }
+
+    .operator-card {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      border-top: 1px solid var(--border-soft);
+      padding: 16px 5px 1px;
+    }
+
+    .avatar {
+      display: grid;
+      width: 32px;
+      height: 32px;
+      flex: none;
+      place-items: center;
+      border: 1px solid #44454a;
+      border-radius: 10px;
+      background: linear-gradient(145deg, #34353a, #25262a);
+      color: #e4e4e6;
+      font-size: 11px;
+      font-weight: 750;
+    }
+
+    .operator-name { font-size: 11px; font-weight: 650; }
+    .operator-role { margin-top: 3px; color: var(--muted); font-size: 10px; }
+    .online-dot {
+      width: 7px;
+      height: 7px;
+      margin-left: auto;
+      border-radius: 50%;
+      background: var(--green);
+      box-shadow: 0 0 9px rgba(99, 203, 145, .4);
+    }
+
+    .main {
+      width: calc(100% - 224px);
+      max-width: 1700px;
+      margin-left: 224px;
+      padding: 25px 30px 32px;
+    }
+
+    .topbar {
+      display: flex;
+      min-height: 52px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 18px;
+      margin-bottom: 21px;
+    }
+
+    .eyebrow {
+      margin-bottom: 5px;
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 650;
+      letter-spacing: .08em;
+      text-transform: uppercase;
+    }
+
+    h1 { margin: 0; font-size: 21px; font-weight: 700; letter-spacing: -.04em; }
+    .topbar-actions { display: flex; align-items: center; gap: 10px; }
+    .demo-badge, .system-state, .date-chip {
+      display: inline-flex;
+      min-height: 30px;
+      align-items: center;
+      gap: 7px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: rgba(255,255,255,.025);
+      padding: 0 10px;
+      color: #b6b7bb;
+      font-size: 10px;
+      white-space: nowrap;
+    }
+
+    .demo-badge { border-color: rgba(232, 186, 91, .22); background: var(--yellow-soft); color: #e9c574; }
+    .system-state .online-dot { width: 6px; height: 6px; margin: 0; }
+
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(5, minmax(0, 1fr));
+      gap: 12px;
+      margin-bottom: 17px;
+    }
+
+    .stat-card {
+      position: relative;
+      min-height: 98px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: linear-gradient(145deg, rgba(31,32,36,.94), rgba(24,25,28,.98));
+      padding: 15px 16px;
+    }
+
+    .stat-card.featured { border-color: rgba(255,118,45,.28); }
+    .stat-card.featured::after {
+      position: absolute;
+      top: -34px;
+      right: -24px;
+      width: 110px;
+      height: 110px;
+      border-radius: 50%;
+      background: rgba(255,118,45,.07);
+      content: "";
+      filter: blur(2px);
+    }
+
+    .stat-label { color: #a1a2a7; font-size: 10px; }
+    .stat-value { margin-top: 9px; font-size: 24px; font-weight: 730; letter-spacing: -.05em; }
+    .stat-foot { margin-top: 4px; color: var(--muted); font-size: 9px; }
+    .stat-foot .orange { color: var(--accent-bright); }
+
+    .workspace {
+      display: grid;
+      grid-template-columns: minmax(265px, .84fr) minmax(350px, 1.28fr) minmax(310px, 1fr);
+      align-items: start;
+      gap: 13px;
+    }
+
+    .panel {
+      min-width: 0;
+      overflow: hidden;
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      background: rgba(25, 26, 29, .96);
+    }
+
+    .panel-header {
+      display: flex;
+      min-height: 53px;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      border-bottom: 1px solid var(--border-soft);
+      padding: 0 14px;
+    }
+
+    .panel-title { display: flex; align-items: center; gap: 8px; font-size: 12px; font-weight: 700; }
+    .panel-title svg { width: 15px; height: 15px; color: var(--muted); }
+    .title-count { color: var(--muted); font-size: 10px; font-weight: 500; }
+    .subtle-action {
+      border: 0;
+      background: transparent;
+      color: var(--muted);
+      cursor: pointer;
+      padding: 5px 2px;
+      font-size: 10px;
+    }
+    .subtle-action:hover { color: var(--text); }
+
+    .queue-tools { display: grid; gap: 8px; border-bottom: 1px solid var(--border-soft); padding: 11px 12px; }
+    .search-wrap { position: relative; }
+    .search-wrap svg {
+      position: absolute;
+      top: 9px;
+      left: 10px;
+      width: 14px;
+      height: 14px;
+      color: var(--muted);
+    }
+
+    .search-input, .filter-select {
+      width: 100%;
+      height: 33px;
+      border: 1px solid #303136;
+      border-radius: 8px;
+      background: #151619;
+      color: var(--text);
+      font-size: 10px;
+    }
+
+    .search-input { padding: 0 10px 0 31px; }
+    .search-input::placeholder { color: #74757b; }
+    .filter-row { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    .filter-select { padding: 0 8px; }
+
+    .ticket-list { max-height: 690px; overflow: auto; padding: 6px; }
+    .ticket-row {
+      display: block;
+      width: 100%;
+      border: 1px solid transparent;
+      border-radius: 9px;
+      background: transparent;
+      cursor: pointer;
+      margin: 2px 0;
+      padding: 11px 10px;
+      text-align: left;
+      transition: background .15s ease, border-color .15s ease;
+    }
+
+    .ticket-row:hover { background: #202125; }
+    .ticket-row.selected { border-color: rgba(255,118,45,.28); background: linear-gradient(100deg, rgba(255,118,45,.11), rgba(255,118,45,.035)); }
+    .ticket-top, .ticket-bottom { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+    .ticket-id { color: #a5a6ab; font-size: 9px; font-weight: 650; letter-spacing: .03em; }
+    .ticket-time { color: #77787e; font-size: 9px; }
+    .ticket-player { overflow: hidden; margin-top: 8px; font-size: 11px; font-weight: 680; text-overflow: ellipsis; white-space: nowrap; }
+    .ticket-topic { overflow: hidden; margin-top: 4px; color: #a0a1a6; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
+    .ticket-bottom { margin-top: 10px; }
+    .ticket-category { overflow: hidden; color: #77787e; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+
+    .priority, .status {
+      display: inline-flex;
+      min-height: 19px;
+      flex: none;
+      align-items: center;
+      gap: 5px;
+      border-radius: 5px;
+      padding: 0 6px;
+      font-size: 9px;
+      font-weight: 650;
+      white-space: nowrap;
+    }
+
+    .priority::before, .status::before { width: 5px; height: 5px; border-radius: 50%; background: currentColor; content: ""; }
+    .priority.high { background: var(--red-soft); color: #ef8a8a; }
+    .priority.medium { background: var(--yellow-soft); color: #e9c574; }
+    .priority.low { background: var(--blue-soft); color: #88b2f0; }
+    .status.new { background: var(--blue-soft); color: #8bb5f3; }
+    .status.processing { background: var(--yellow-soft); color: #e9c574; }
+    .status.review { background: var(--accent-soft); color: #ff9a65; }
+    .status.escalated { background: var(--red-soft); color: #ef8a8a; }
+    .status.approved { background: var(--green-soft); color: #80d5a5; }
+
+    .ticket-detail { padding: 15px; }
+    .detail-meta { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; margin-bottom: 13px; }
+    .detail-id { margin-right: auto; color: #a5a6ab; font-size: 10px; font-weight: 650; }
+    .player-heading { display: flex; align-items: center; gap: 10px; margin-bottom: 14px; }
+    .player-avatar {
+      display: grid;
+      width: 36px;
+      height: 36px;
+      flex: none;
+      place-items: center;
+      border: 1px solid #38393e;
+      border-radius: 11px;
+      background: #25262a;
+      color: #e1e1e3;
+      font-size: 11px;
+      font-weight: 700;
+    }
+    .player-name { font-size: 12px; font-weight: 700; }
+    .player-id { margin-top: 3px; color: var(--muted); font-size: 9px; }
+    .message-card {
+      border: 1px solid #303136;
+      border-radius: 9px;
+      background: #151619;
+      padding: 12px;
+    }
+    .micro-label { color: var(--muted); font-size: 9px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase; }
+    .player-message { margin-top: 8px; color: #dedee0; font-size: 11px; line-height: 1.65; }
+    .detail-section { margin-top: 16px; }
+    .section-heading { display: flex; align-items: center; justify-content: space-between; margin-bottom: 9px; }
+    .section-heading h3 { margin: 0; font-size: 10px; font-weight: 700; }
+    .section-heading span { color: var(--muted); font-size: 9px; }
+
+    .attachment-card {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      border: 1px solid var(--border-soft);
+      border-radius: 8px;
+      background: #1b1c1f;
+      padding: 9px;
+    }
+    .file-icon {
+      display: grid;
+      width: 29px;
+      height: 29px;
+      flex: none;
+      place-items: center;
+      border-radius: 7px;
+      background: rgba(121,169,236,.12);
+      color: #8bb5f3;
+    }
+    .file-icon svg { width: 15px; height: 15px; }
+    .file-name { font-size: 10px; font-weight: 650; }
+    .file-meta { margin-top: 3px; color: var(--muted); font-size: 9px; }
+    .file-state { margin-left: auto; color: var(--yellow); font-size: 9px; white-space: nowrap; }
+
+    .history { display: grid; gap: 0; }
+    .history-item { position: relative; display: grid; grid-template-columns: 13px 1fr auto; gap: 8px; min-height: 35px; }
+    .history-item:not(:last-child)::after { position: absolute; top: 11px; bottom: -1px; left: 5px; width: 1px; background: #36373c; content: ""; }
+    .history-dot { z-index: 1; width: 11px; height: 11px; border: 2px solid #707177; border-radius: 50%; background: var(--panel); }
+    .history-item.current .history-dot { border-color: var(--accent); background: var(--accent); box-shadow: 0 0 8px rgba(255,118,45,.35); }
+    .history-text { color: #c5c6ca; font-size: 9px; line-height: 1.45; }
+    .history-time { color: #77787e; font-size: 8px; white-space: nowrap; }
+
+    .analysis-panel { padding-bottom: 13px; }
+    .ai-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      border: 1px solid rgba(255,118,45,.2);
+      border-radius: 6px;
+      background: var(--accent-soft);
+      color: #ff9a65;
+      padding: 4px 6px;
+      font-size: 8px;
+      font-weight: 700;
+      letter-spacing: .04em;
+    }
+    .ai-badge svg { width: 11px; height: 11px; }
+    .analysis-body { padding: 13px; }
+    .category-result { display: flex; align-items: flex-start; justify-content: space-between; gap: 9px; }
+    .category-name { margin-top: 5px; font-size: 13px; font-weight: 720; }
+    .category-reason { margin-top: 5px; color: #929399; font-size: 9px; line-height: 1.45; }
+    .confidence { flex: none; text-align: right; }
+    .confidence strong { display: block; color: #f0c46b; font-size: 15px; font-weight: 740; }
+    .confidence span { color: var(--muted); font-size: 8px; }
+    .confidence-track { height: 3px; overflow: hidden; border-radius: 5px; background: #34353a; margin-top: 6px; }
+    .confidence-track span { display: block; width: 62%; height: 100%; border-radius: inherit; background: var(--yellow); }
+    .summary-text { margin-top: 12px; color: #d3d3d6; font-size: 10px; line-height: 1.55; }
+
+    .facts-grid { display: grid; gap: 7px; margin-top: 13px; }
+    .fact-group { border: 1px solid var(--border-soft); border-radius: 8px; background: rgba(255,255,255,.015); padding: 8px 9px; }
+    .fact-heading { display: flex; align-items: center; gap: 6px; font-size: 9px; font-weight: 700; }
+    .fact-dot { width: 6px; height: 6px; border-radius: 50%; background: #9a9ba1; }
+    .fact-group.claim .fact-dot { background: #e8ba5b; }
+    .fact-group.attach .fact-dot { background: #79a9ec; }
+    .fact-group.verified .fact-dot { background: var(--green); }
+    .fact-group.unknown .fact-dot { background: #b28be8; }
+    .fact-copy { margin-top: 5px; color: #9b9ca1; font-size: 9px; line-height: 1.45; }
+    .fact-copy.empty { color: #74757b; font-style: italic; }
+    .escalation-box { display: flex; gap: 8px; margin-top: 11px; border: 1px solid rgba(239,119,119,.2); border-radius: 8px; background: rgba(239,119,119,.07); padding: 9px; }
+    .escalation-icon { flex: none; color: #ef8a8a; font-size: 12px; line-height: 1; }
+    .escalation-title { color: #ef9999; font-size: 9px; font-weight: 700; }
+    .escalation-copy { margin-top: 4px; color: #c29595; font-size: 9px; line-height: 1.45; }
+
+    .rules-section { margin-top: 15px; border-top: 1px solid var(--border-soft); padding-top: 13px; }
+    .empty-rules { display: flex; gap: 8px; margin-top: 8px; border: 1px dashed #393a3f; border-radius: 8px; background: #17181a; padding: 10px; }
+    .empty-rules-icon { flex: none; color: var(--muted); font-size: 13px; }
+    .empty-rules strong { display: block; color: #c7c8cb; font-size: 9px; }
+    .empty-rules p { margin: 4px 0 0; color: #85868c; font-size: 9px; line-height: 1.45; }
+    .empty-rules a { color: #ff9a65; text-decoration: none; }
+    .empty-rules a:hover { text-decoration: underline; }
+
+    .draft-section { margin-top: 15px; border-top: 1px solid var(--border-soft); padding-top: 13px; }
+    .draft-label { color: var(--muted); font-size: 9px; }
+    .draft-text {
+      display: block;
+      width: 100%;
+      min-height: 90px;
+      resize: vertical;
+      border: 1px solid #34353a;
+      border-radius: 8px;
+      background: #151619;
+      color: #d9d9dc;
+      margin-top: 7px;
+      padding: 9px;
+      font-size: 10px;
+      line-height: 1.55;
+    }
+    .draft-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+    .button {
+      display: inline-flex;
+      min-height: 30px;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      border: 1px solid #36373c;
+      border-radius: 7px;
+      background: #222327;
+      color: #c9c9cc;
+      cursor: pointer;
+      padding: 0 9px;
+      font-size: 9px;
+      font-weight: 650;
+      transition: border-color .15s ease, background .15s ease, color .15s ease;
+    }
+    .button:hover { border-color: #55565c; background: #292a2e; color: #fff; }
+    .button svg { width: 12px; height: 12px; }
+    .button.primary { border-color: #ff762d; background: linear-gradient(135deg, #ff813b, #ed6824); color: #171310; box-shadow: 0 4px 14px rgba(255,118,45,.13); }
+    .button.primary:hover { background: #ff945d; }
+    .button.danger { border-color: rgba(239,119,119,.24); background: rgba(239,119,119,.07); color: #ef9999; }
+    .button.danger:hover { background: rgba(239,119,119,.14); }
+    .button:disabled { cursor: not-allowed; opacity: .5; }
+
+    .notice {
+      position: fixed;
+      right: 22px;
+      bottom: 20px;
+      z-index: 10;
+      max-width: min(360px, calc(100vw - 32px));
+      transform: translateY(12px);
+      border: 1px solid #3c3d42;
+      border-radius: 9px;
+      background: #242529;
+      box-shadow: 0 12px 35px rgba(0,0,0,.35);
+      color: #e4e4e6;
+      padding: 11px 14px;
+      font-size: 11px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .18s ease, transform .18s ease;
+    }
+    .notice.show { transform: translateY(0); opacity: 1; }
+    .empty-queue { padding: 25px 14px; color: var(--muted); font-size: 10px; line-height: 1.5; text-align: center; }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0,0,0,0); white-space: nowrap; }
+
+    @media (max-width: 1320px) {
+      .main { padding-right: 20px; padding-left: 20px; }
+      .workspace { grid-template-columns: minmax(250px, .78fr) minmax(360px, 1.22fr); }
+      .analysis-panel { grid-column: 1 / -1; display: grid; grid-template-columns: 1fr 1fr; align-items: start; }
+      .analysis-panel > .panel-header { grid-column: 1 / -1; }
+      .analysis-body { padding: 13px 15px; }
+      .analysis-body + .analysis-body { border-left: 1px solid var(--border-soft); }
+      .analysis-body .rules-section, .analysis-body .draft-section { margin-top: 12px; }
+    }
+
+    @media (max-width: 880px) {
+      .sidebar { position: static; width: 100%; height: auto; border-right: 0; border-bottom: 1px solid var(--border-soft); padding: 11px 14px; }
+      .brand { padding: 0 4px 10px; }
+      .workspace-label, .sidebar-spacer, .operator-card { display: none; }
+      .nav-list { display: flex; gap: 5px; overflow-x: auto; padding-bottom: 2px; }
+      .nav-item { width: auto; min-width: max-content; min-height: 34px; padding: 0 9px; font-size: 10px; }
+      .nav-item svg { width: 14px; height: 14px; }
+      .nav-count { min-width: 17px; height: 17px; }
+      .main { width: 100%; margin-left: 0; padding: 19px 16px 28px; }
+      .stats { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+      .workspace { grid-template-columns: minmax(230px, .8fr) minmax(320px, 1.2fr); }
+    }
+
+    @media (max-width: 620px) {
+      .topbar { align-items: flex-start; }
+      .topbar-actions { flex-direction: column; align-items: flex-end; gap: 6px; }
+      .date-chip { display: none; }
+      h1 { font-size: 18px; }
+      .stats { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+      .stat-card { min-height: 87px; padding: 12px; }
+      .stat-value { margin-top: 7px; font-size: 21px; }
+      .workspace { grid-template-columns: 1fr; }
+      .ticket-list { max-height: 285px; }
+      .analysis-panel { grid-column: auto; display: block; }
+      .analysis-body + .analysis-body { border-top: 1px solid var(--border-soft); border-left: 0; }
+      .detail-meta { gap: 5px; }
+      .priority, .status { font-size: 8px; }
+      .panel-header { min-height: 49px; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
+    }
+  </style>
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar" aria-label="Основная навигация">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">SC</div>
+        <div>
+          <div class="brand-name">Support Copilot</div>
+          <div class="brand-caption">Grand Mobile · операторская</div>
+        </div>
+      </div>
+      <div class="workspace-label">Рабочее пространство</div>
+      <nav class="nav-list">
+        <button class="nav-item" type="button" data-nav="Dashboard">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="3" y="3" width="8" height="8" rx="2"/><rect x="14" y="3" width="7" height="5" rx="2"/><rect x="14" y="11" width="7" height="10" rx="2"/><rect x="3" y="14" width="8" height="7" rx="2"/></svg><span>Dashboard</span>
+        </button>
+        <button class="nav-item active" type="button" data-nav="Обращения" aria-current="page">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M5 5.5A2.5 2.5 0 0 1 7.5 3H20v15H7.5A2.5 2.5 0 0 0 5 20.5z"/><path d="M5 5.5v15M9 7h7M9 10.5h7"/></svg><span>Обращения</span><span class="nav-count" id="nav-count">12</span>
+        </button>
+        <button class="nav-item" type="button" data-nav="База правил">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v16H6.5A2.5 2.5 0 0 0 4 21.5z"/><path d="M4 5.5v16M8 7h8M8 10.5h8M8 14h5"/></svg><span>База правил</span>
+        </button>
+        <button class="nav-item" type="button" data-nav="Аналитика">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M4 19V5M4 19h17"/><path d="m7 15 4-4 3 2 6-7"/><path d="M16 6h4v4"/></svg><span>Аналитика</span>
+        </button>
+        <button class="nav-item" type="button" data-nav="Настройки">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="m19.4 15 .1.1 1.1.9-1.1 1.9-1.3-.5a7.5 7.5 0 0 1-1.4.8l-.2 1.4h-2.2l-.3-1.4a7 7 0 0 1-1.5-.8l-1.3.5-1.1-1.9 1.1-.9a6 6 0 0 1 0-1.7l-1.1-.9 1.1-1.9 1.3.5a7.5 7.5 0 0 1 1.5-.8l.3-1.4h2.2l.2 1.4a7.5 7.5 0 0 1 1.4.8l1.3-.5 1.1 1.9-1.1.9a6 6 0 0 1-.1 1.6Z" transform="translate(-1 -1) scale(.96)"/></svg><span>Настройки</span>
+        </button>
+      </nav>
+      <div class="sidebar-spacer"></div>
+      <div class="operator-card">
+        <div class="avatar">AK</div>
+        <div><div class="operator-name">Алексей К.</div><div class="operator-role">Специалист поддержки</div></div>
+        <span class="online-dot" aria-label="В сети"></span>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div>
+          <div class="eyebrow">Рабочее пространство / поддержка</div>
+          <h1>Обращения игроков</h1>
+        </div>
+        <div class="topbar-actions">
+          <span class="demo-badge"><span aria-hidden="true">●</span> Демонстрационные данные</span>
+          <span class="system-state"><span class="online-dot"></span> Локальный режим</span>
+          <span class="date-chip" id="current-date">30 окт, 2026</span>
+        </div>
+      </header>
+
+      <section class="stats" aria-label="Демонстрационные показатели">
+        <article class="stat-card featured"><div class="stat-label">Всего обращений</div><div class="stat-value">248</div><div class="stat-foot"><span class="orange">Демо</span> · за последние 30 дней</div></article>
+        <article class="stat-card"><div class="stat-label">Новые</div><div class="stat-value" id="stat-new">05</div><div class="stat-foot">В демо-очереди</div></article>
+        <article class="stat-card"><div class="stat-label">В обработке</div><div class="stat-value" id="stat-processing">03</div><div class="stat-foot">В демо-очереди</div></article>
+        <article class="stat-card"><div class="stat-label">Переданы специалистам</div><div class="stat-value" id="stat-escalated">02</div><div class="stat-foot">Требуют ручной проверки</div></article>
+        <article class="stat-card"><div class="stat-label">Среднее время обработки</div><div class="stat-value">—</div><div class="stat-foot">Демо-метрика не подключена</div></article>
+      </section>
+
+      <section class="workspace" aria-label="Рабочее место оператора">
+        <section class="panel queue-panel" aria-label="Очередь обращений">
+          <div class="panel-header">
+            <div class="panel-title">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="1" fill="currentColor"/><circle cx="15" cy="12" r="1" fill="currentColor"/><circle cx="10" cy="18" r="1" fill="currentColor"/></svg>
+              Очередь <span class="title-count" id="queue-total">12</span>
+            </div>
+            <button class="subtle-action" type="button" id="reset-filters">Сбросить</button>
+          </div>
+          <div class="queue-tools">
+            <label class="search-wrap">
+              <span class="sr-only">Поиск по обращениям</span>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8"/><path d="m16 16 4.5 4.5"/></svg>
+              <input class="search-input" id="ticket-search" type="search" placeholder="Поиск по ID или игроку">
+            </label>
+            <div class="filter-row">
+              <label><span class="sr-only">Фильтр по статусу</span><select class="filter-select" id="status-filter"><option value="">Все статусы</option><option>New</option><option>Processing</option><option>Needs Review</option><option>Escalated</option><option>Approved</option></select></label>
+              <label><span class="sr-only">Фильтр по приоритету</span><select class="filter-select" id="priority-filter"><option value="">Все приоритеты</option><option>Высокий</option><option>Средний</option><option>Низкий</option></select></label>
+            </div>
+          </div>
+          <div class="ticket-list" id="ticket-list" role="listbox" aria-label="Обращения"></div>
+        </section>
+
+        <section class="panel" aria-label="Подробности обращения">
+          <div class="panel-header">
+            <div class="panel-title">Карточка обращения <span class="title-count">· анализ оператором</span></div>
+            <button class="subtle-action" type="button" id="refresh-ticket" aria-label="Обновить демонстрационную карточку">↻</button>
+          </div>
+          <div class="ticket-detail" id="ticket-detail"></div>
+        </section>
+
+        <section class="panel analysis-panel" aria-label="AI-анализ и черновик ответа">
+          <div class="panel-header">
+            <div class="panel-title">Предварительный анализ</div>
+            <span class="ai-badge"><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M8 1.5 9.6 6.4 14.5 8l-4.9 1.6L8 14.5l-1.6-4.9L1.5 8l4.9-1.6z"/></svg> AI · ДЕМО</span>
+          </div>
+          <div class="analysis-body" id="analysis-body"></div>
+          <div class="analysis-body" id="rules-draft-body"></div>
+        </section>
+      </section>
+      <div class="notice" id="notice" role="status" aria-live="polite"></div>
+    </main>
+  </div>
+
+  <script>
+    const tickets = [
+      {
+        id: "GM-28491", player: "NeonRider", playerId: "ID игрока · 584 921", category: "Жалоба на игрока",
+        priority: "Высокий", status: "Needs Review", time: "2 мин назад", date: "Сегодня, 14:42",
+        message: "Игрок оскорблял меня в чате и угрожал. Прошу проверить ситуацию. Есть скриншот переписки.",
+        attachment: { name: "chat_screenshot.png", meta: "PNG · 1,8 МБ", state: "Не проверено" },
+        summary: "Игрок сообщает об оскорблениях и угрозах в чате. Это утверждение не подтверждено системными данными.",
+        claims: ["Игрок утверждает, что получил оскорбления и угрозы в чате."],
+        attachmentFact: "Файл приложен; содержимое изображения не анализировалось.",
+        unknown: "Не указаны время события и игровой лог. Нужна проверка оператором.",
+        confidence: 62,
+        escalation: "Подходящее правило не найдено в доступной базе. Угрозы и доказательства требуют ручной проверки.",
+        draft: "Здравствуйте! Спасибо за обращение. Мы передали информацию специалисту для проверки. Пожалуйста, сохраните исходные материалы и сообщите примерное время события, если оно известно."
+      },
+      {
+        id: "GM-28490", player: "LunaWest", playerId: "ID игрока · 193 047", category: "Апелляция санкции",
+        priority: "Высокий", status: "Escalated", time: "8 мин назад", date: "Сегодня, 14:36",
+        message: "Прошу пересмотреть блокировку аккаунта. Считаю, что санкция выдана ошибочно.",
+        attachment: null, summary: "Игрок просит пересмотреть блокировку аккаунта.",
+        claims: ["Игрок считает, что блокировка выдана ошибочно."], attachmentFact: "",
+        unknown: "Причина и обстоятельства санкции не подтверждены. Требуется проверка уполномоченным специалистом.",
+        confidence: 84, escalation: "Апелляции санкций требуют решения оператора.",
+        draft: "Здравствуйте! Мы получили вашу апелляцию. Обращение передано специалисту для проверки. Решение будет принято после рассмотрения доступной информации."
+      },
+      {
+        id: "GM-28489", player: "Rex_Morgan", playerId: "ID игрока · 602 118", category: "Безопасность аккаунта",
+        priority: "Высокий", status: "Processing", time: "16 мин назад", date: "Сегодня, 14:28",
+        message: "Кажется, кто-то получил доступ к моему аккаунту. Не могу войти после смены пароля.",
+        attachment: null, summary: "Игрок сообщает о возможном несанкционированном доступе к аккаунту.",
+        claims: ["Игрок сообщает, что не может войти и подозревает чужой доступ."], attachmentFact: "",
+        unknown: "Фактические входы, история смены пароля и игровые логи недоступны этому интерфейсу.",
+        confidence: 79, escalation: "Подозрение на взлом требует проверки специалистом.",
+        draft: "Здравствуйте! Понимаем ваше беспокойство. Мы передали обращение специалисту по безопасности аккаунтов. Не сообщайте пароль или коды подтверждения в чате."
+      },
+      {
+        id: "GM-28488", player: "MiaDrive", playerId: "ID игрока · 317 004", category: "Техническая проблема",
+        priority: "Средний", status: "New", time: "24 мин назад", date: "Сегодня, 14:20",
+        message: "После обновления игра закрывается при загрузке гаража.",
+        attachment: { name: "crash_screen.jpg", meta: "JPG · 940 КБ", state: "Не проверено" },
+        summary: "Игрок сообщает о закрытии игры при загрузке гаража после обновления.",
+        claims: ["Игрок сообщает, что игра закрывается при загрузке гаража."],
+        attachmentFact: "Файл приложен; содержимое изображения не анализировалось.",
+        unknown: "Не указаны модель устройства, версия ОС и точный текст ошибки.",
+        confidence: 73, escalation: "Подходящее правило не найдено; нужна техническая проверка.",
+        draft: "Здравствуйте! Спасибо за описание проблемы. Чтобы помочь с проверкой, уточните модель устройства и версию операционной системы. Вложение будет проверено специалистом."
+      },
+      {
+        id: "GM-28487", player: "Max_Orlov", playerId: "ID игрока · 451 300", category: "Покупка",
+        priority: "Средний", status: "Processing", time: "31 мин назад", date: "Сегодня, 14:13",
+        message: "Оплатил покупку, но предмет не появился. Чек могу предоставить.",
+        attachment: { name: "receipt.pdf", meta: "PDF · 320 КБ", state: "Не проверено" },
+        summary: "Игрок сообщает о покупке, после которой предмет не появился.",
+        claims: ["Игрок сообщает, что предмет не появился после оплаты."],
+        attachmentFact: "PDF приложен; содержимое документа не анализировалось.",
+        unknown: "Платёжная история и состояние инвентаря не подключены.",
+        confidence: 77, escalation: "Проверка платежа и инвентаря требует системных данных.",
+        draft: "Здравствуйте! Мы получили обращение о покупке. Специалист проверит информацию. Пожалуйста, не отправляйте платёжные данные и полные реквизиты карты."
+      },
+      {
+        id: "GM-28486", player: "SunnyFox", playerId: "ID игрока · 829 617", category: "Неясное",
+        priority: "Низкий", status: "New", time: "48 мин назад", date: "Сегодня, 13:56",
+        message: "Помогите разобраться, у меня всё пропало.",
+        attachment: null, summary: "В сообщении недостаточно информации для определения проблемы.",
+        claims: ["Игрок сообщает, что «всё пропало»."], attachmentFact: "",
+        unknown: "Не указано, что именно пропало, когда это произошло и где именно.",
+        confidence: 28, escalation: "Недостаточно данных; нужно уточнение от игрока.",
+        draft: "Здравствуйте! Поможем разобраться. Уточните, пожалуйста, что именно пропало и когда вы заметили проблему."
+      },
+      {
+        id: "GM-28485", player: "DarkWolf", playerId: "ID игрока · 047 531", category: "Жалоба на игрока",
+        priority: "Низкий", status: "New", time: "1 ч назад", date: "Сегодня, 13:44",
+        message: "Игрок мешает играть на событии.",
+        attachment: null, summary: "Игрок сообщает о помехах во время игрового события.",
+        claims: ["Игрок сообщает, что другой участник мешает игре."], attachmentFact: "",
+        unknown: "Не указаны время, название события и дополнительные материалы.",
+        confidence: 48, escalation: "Нет проверенных доказательств и соответствующего правила.",
+        draft: "Здравствуйте! Уточните, пожалуйста, название события и примерное время ситуации. Это поможет специалисту проверить обращение."
+      },
+      {
+        id: "GM-28484", player: "KiraV", playerId: "ID игрока · 322 841", category: "Жалоба на администратора",
+        priority: "Высокий", status: "Escalated", time: "1 ч назад", date: "Сегодня, 13:32",
+        message: "Хочу оставить жалобу на действия администратора во время проверки.",
+        attachment: null, summary: "Игрок просит проверить действия администратора.",
+        claims: ["Игрок выражает несогласие с действиями администратора."], attachmentFact: "",
+        unknown: "Не описаны конкретные действия и время инцидента.",
+        confidence: 81, escalation: "Жалобы на администрацию требуют независимого рассмотрения.",
+        draft: "Здравствуйте! Мы зарегистрировали обращение и передали его на рассмотрение ответственному специалисту."
+      },
+      {
+        id: "GM-28483", player: "VOLT_77", playerId: "ID игрока · 051 772", category: "Апелляция санкции",
+        priority: "Средний", status: "Processing", time: "2 ч назад", date: "Сегодня, 12:48",
+        message: "Получил предупреждение и хочу узнать причину.",
+        attachment: null, summary: "Игрок просит разъяснить причину предупреждения.",
+        claims: ["Игрок сообщает о полученном предупреждении."], attachmentFact: "",
+        unknown: "Данные о санкции и причине предупреждения не подключены.",
+        confidence: 70, escalation: "Информация о применённой санкции требует проверки оператором.",
+        draft: "Здравствуйте! Обращение принято. Специалист проверит информацию о предупреждении и ответит по результатам."
+      },
+      {
+        id: "GM-28482", player: "BlueComet", playerId: "ID игрока · 100 429", category: "Техническая проблема",
+        priority: "Низкий", status: "Approved", time: "3 ч назад", date: "Сегодня, 11:52",
+        message: "Не получается подключиться к серверу после перезапуска.",
+        attachment: null, summary: "Игрок сообщает о проблеме подключения после перезапуска.",
+        claims: ["Игрок сообщает о проблеме подключения к серверу."], attachmentFact: "",
+        unknown: "Состояние сервера и сетевые логи недоступны.",
+        confidence: 67, escalation: "Для подтверждения причины требуется системная проверка.",
+        draft: "Здравствуйте! Спасибо за обращение. Уточните, пожалуйста, возникает ли ошибка при каждом подключении."
+      },
+      {
+        id: "GM-28481", player: "Sasha_R", playerId: "ID игрока · 715 292", category: "Покупка",
+        priority: "Средний", status: "New", time: "4 ч назад", date: "Сегодня, 10:37",
+        message: "Подскажите, где посмотреть историю покупок?",
+        attachment: null, summary: "Игрок спрашивает, где посмотреть историю покупок.",
+        claims: ["Игрок просит подсказать, где найти историю покупок."], attachmentFact: "",
+        unknown: "Нет проверенной инструкции в доступных материалах.",
+        confidence: 59, escalation: "Проверенная справочная статья не подключена.",
+        draft: "Здравствуйте! Уточним актуальный способ просмотра истории покупок и вернёмся с ответом."
+      },
+      {
+        id: "GM-28480", player: "Niko_R", playerId: "ID игрока · 638 907", category: "Неясное",
+        priority: "Низкий", status: "New", time: "5 ч назад", date: "Сегодня, 09:16",
+        message: "Здравствуйте, вопрос по игре.",
+        attachment: null, summary: "Игрок не уточнил свой вопрос.",
+        claims: ["Игрок сообщает, что у него есть вопрос по игре."], attachmentFact: "",
+        unknown: "Не указана тема обращения.",
+        confidence: 31, escalation: "Не хватает сведений для анализа.",
+        draft: "Здравствуйте! Напишите, пожалуйста, подробнее, с каким вопросом по игре вы столкнулись."
+      }
+    ];
+
+    const statusLabels = {
+      "New": "Новое",
+      "Processing": "В работе",
+      "Needs Review": "На проверке",
+      "Escalated": "Специалист",
+      "Approved": "Одобрено"
+    };
+    const statusClass = {
+      "New": "new",
+      "Processing": "processing",
+      "Needs Review": "review",
+      "Escalated": "escalated",
+      "Approved": "approved"
+    };
+    let activeTicketId = tickets[0].id;
+    let noticeTimer;
+
+    function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, char => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+      })[char]);
+    }
+
+    function showNotice(message) {
+      const notice = document.getElementById("notice");
+      notice.textContent = message;
+      notice.classList.add("show");
+      clearTimeout(noticeTimer);
+      noticeTimer = setTimeout(() => notice.classList.remove("show"), 2800);
+    }
+
+    function currentTicket() {
+      return tickets.find(ticket => ticket.id === activeTicketId) || tickets[0];
+    }
+
+    function renderMetrics() {
+      document.getElementById("stat-new").textContent =
+        String(tickets.filter(ticket => ticket.status === "New").length).padStart(2, "0");
+      document.getElementById("stat-processing").textContent =
+        String(tickets.filter(ticket => ticket.status === "Processing").length).padStart(2, "0");
+      document.getElementById("stat-escalated").textContent =
+        String(tickets.filter(ticket => ticket.status === "Escalated").length).padStart(2, "0");
+    }
+
+    function renderQueue() {
+      const previousTicketId = activeTicketId;
+      const query = document.getElementById("ticket-search").value.trim().toLowerCase();
+      const status = document.getElementById("status-filter").value;
+      const priority = document.getElementById("priority-filter").value;
+      const filtered = tickets.filter(ticket => {
+        const matchesQuery = !query || `${ticket.id} ${ticket.player} ${ticket.category}`.toLowerCase().includes(query);
+        const matchesStatus = !status || ticket.status === status;
+        const matchesPriority = !priority || ticket.priority === priority;
+        return matchesQuery && matchesStatus && matchesPriority;
+      });
+
+      document.getElementById("queue-total").textContent = filtered.length;
+      document.getElementById("nav-count").textContent = tickets.filter(ticket => ticket.status === "New").length;
+      renderMetrics();
+      const list = document.getElementById("ticket-list");
+      if (!filtered.length) {
+        list.innerHTML = '<div class="empty-queue">Обращений по заданным фильтрам не найдено.</div>';
+        return;
+      }
+      if (!filtered.some(ticket => ticket.id === activeTicketId)) activeTicketId = filtered[0].id;
+      list.innerHTML = filtered.map(ticket => {
+        const priorityClass = ticket.priority === "Высокий" ? "high" : ticket.priority === "Средний" ? "medium" : "low";
+        const selected = ticket.id === activeTicketId;
+        return `<button type="button" role="option" aria-selected="${selected}" class="ticket-row${selected ? " selected" : ""}" data-ticket-id="${escapeHtml(ticket.id)}">
+          <div class="ticket-top"><span class="ticket-id">${escapeHtml(ticket.id)}</span><span class="ticket-time">${escapeHtml(ticket.time)}</span></div>
+          <div class="ticket-player">${escapeHtml(ticket.player)}</div>
+          <div class="ticket-topic">${escapeHtml(ticket.message)}</div>
+          <div class="ticket-bottom"><span class="ticket-category">${escapeHtml(ticket.category)}</span><span class="priority ${priorityClass}">${escapeHtml(ticket.priority)}</span></div>
+          <div class="ticket-bottom"><span class="status ${statusClass[ticket.status] || "new"}">${escapeHtml(statusLabels[ticket.status] || ticket.status)}</span><span class="ticket-time">${escapeHtml(ticket.date)}</span></div>
+        </button>`;
+      }).join("");
+      list.querySelectorAll("[data-ticket-id]").forEach(button => {
+        button.addEventListener("click", () => {
+          activeTicketId = button.dataset.ticketId;
+          renderQueue();
+          renderDetails();
+          renderAnalysis();
+        });
+      });
+      if (previousTicketId !== activeTicketId) {
+        renderDetails();
+        renderAnalysis();
+      }
+    }
+
+    function renderDetails() {
+      const ticket = currentTicket();
+      const priorityClass = ticket.priority === "Высокий" ? "high" : ticket.priority === "Средний" ? "medium" : "low";
+      const attachment = ticket.attachment
+        ? `<div class="attachment-card"><div class="file-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M13 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V10z"/><path d="M13 3v7h7"/></svg></div><div><div class="file-name">${escapeHtml(ticket.attachment.name)}</div><div class="file-meta">${escapeHtml(ticket.attachment.meta)}</div></div><span class="file-state">${escapeHtml(ticket.attachment.state)}</span></div>`
+        : '<div class="fact-copy empty">Вложения не предоставлены</div>';
+      document.getElementById("ticket-detail").innerHTML = `
+        <div class="detail-meta"><span class="detail-id">${escapeHtml(ticket.id)}</span><span class="priority ${priorityClass}">${escapeHtml(ticket.priority)}</span><span class="status ${statusClass[ticket.status] || "new"}">${escapeHtml(statusLabels[ticket.status] || ticket.status)}</span></div>
+        <div class="player-heading"><div class="player-avatar">${escapeHtml(ticket.player.slice(0, 2).toUpperCase())}</div><div><div class="player-name">${escapeHtml(ticket.player)}</div><div class="player-id">${escapeHtml(ticket.playerId)}</div></div></div>
+        <div class="message-card"><div class="micro-label">Сообщение игрока · ${escapeHtml(ticket.date)}</div><div class="player-message">${escapeHtml(ticket.message)}</div></div>
+        <div class="detail-section"><div class="section-heading"><h3>Вложения</h3><span>${ticket.attachment ? "1 файл" : "Нет файлов"}</span></div>${attachment}</div>
+        <div class="detail-section"><div class="section-heading"><h3>История обработки</h3><span>Демо</span></div>
+          <div class="history">
+            <div class="history-item"><span class="history-dot"></span><span class="history-text">Обращение создано</span><span class="history-time">${escapeHtml(ticket.date)}</span></div>
+            <div class="history-item"><span class="history-dot"></span><span class="history-text">Предварительный анализ подготовлен</span><span class="history-time">Сейчас</span></div>
+            <div class="history-item current"><span class="history-dot"></span><span class="history-text">Ожидает решения оператора</span><span class="history-time">Текущий этап</span></div>
+          </div>
+        </div>`;
+    }
+
+    function renderAnalysis() {
+      const ticket = currentTicket();
+      const analysis = document.getElementById("analysis-body");
+      const categoryName = ticket.category === "Жалоба на игрока" ? "Player Report" :
+        ticket.category === "Апелляция санкции" ? "Appeal / Ban" :
+        ticket.category === "Жалоба на администратора" ? "Admin Complaint" :
+        ticket.category === "Безопасность аккаунта" ? "Account Security" :
+        ticket.category === "Покупка" ? "Payment / Purchase" :
+        ticket.category === "Техническая проблема" ? "Bug / Technical Issue" : "Other / Unclear";
+      analysis.innerHTML = `
+        <div class="category-result">
+          <div><div class="micro-label">Категория · ${ticket.playerId.includes("ID") ? "определена по тексту" : "демо"}</div><div class="category-name">${categoryName}</div><div class="category-reason">Демонстрационная классификация по сообщению. Требует проверки оператором.</div></div>
+          <div class="confidence"><strong>${ticket.confidence}%</strong><span>уверенность · демо</span><div class="confidence-track"><span style="width:${ticket.confidence}%"></span></div></div>
+        </div>
+        <div class="summary-text">${escapeHtml(ticket.summary)}</div>
+        <div class="facts-grid">
+          <div class="fact-group claim"><div class="fact-heading"><span class="fact-dot"></span>Player Claims</div><div class="fact-copy">${escapeHtml(ticket.claims.join(" "))}</div></div>
+          <div class="fact-group attach"><div class="fact-heading"><span class="fact-dot"></span>Attachments</div><div class="fact-copy ${ticket.attachmentFact ? "" : "empty"}">${escapeHtml(ticket.attachmentFact || "Вложения отсутствуют. Claims не подтверждены.")}</div></div>
+          <div class="fact-group verified"><div class="fact-heading"><span class="fact-dot"></span>Verified System Data</div><div class="fact-copy empty">Подтверждённые системные данные не подключены.</div></div>
+          <div class="fact-group unknown"><div class="fact-heading"><span class="fact-dot"></span>Unknown</div><div class="fact-copy">${escapeHtml(ticket.unknown)}</div></div>
+        </div>
+        <div class="escalation-box"><span class="escalation-icon" aria-hidden="true">!</span><div><div class="escalation-title">Нужна ручная проверка</div><div class="escalation-copy">${escapeHtml(ticket.escalation)}</div></div></div>`;
+
+      document.getElementById("rules-draft-body").innerHTML = `
+        <div class="rules-section"><div class="section-heading"><h3>Найденные правила</h3><span>База не подключена</span></div>
+          <div class="empty-rules"><span class="empty-rules-icon" aria-hidden="true">⌕</span><div><strong>Подходящий пункт не найден</strong><p>Загрузите проверенные документы в базу правил. Система не подставляет вымышленные пункты. <a href="#" data-nav="База правил">Открыть базу правил</a></p></div></div>
+        </div>
+        <div class="draft-section"><div class="section-heading"><h3>Черновик ответа</h3><span>Только для оператора</span></div>
+          <label class="draft-label" for="draft-text">Можно отредактировать перед рассмотрением</label>
+          <textarea class="draft-text" id="draft-text">${escapeHtml(ticket.draft)}</textarea>
+          <div class="draft-actions">
+            <button class="button" type="button" id="copy-draft"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg>Копировать</button>
+            <button class="button primary" type="button" id="approve-draft">Одобрить черновик</button>
+            <button class="button danger" type="button" id="escalate-ticket">Передать специалисту</button>
+          </div>
+          <div class="fact-copy" style="margin-top:7px">Одобрение меняет только демо-статус. Ответ игроку автоматически не отправляется.</div>
+        </div>`;
+
+      document.getElementById("copy-draft").addEventListener("click", async () => {
+        const text = document.getElementById("draft-text").value;
+        try {
+          await navigator.clipboard.writeText(text);
+          showNotice("Черновик скопирован.");
+        } catch {
+          const field = document.getElementById("draft-text");
+          field.select();
+          showNotice("Выделите текст черновика и скопируйте вручную.");
+        }
+      });
+      document.getElementById("approve-draft").addEventListener("click", () => {
+        ticket.draft = document.getElementById("draft-text").value;
+        ticket.status = "Approved";
+        renderQueue(); renderDetails();
+        showNotice("Черновик отмечен как одобренный. Ответ не отправлен.");
+      });
+      document.getElementById("escalate-ticket").addEventListener("click", () => {
+        ticket.draft = document.getElementById("draft-text").value;
+        ticket.status = "Escalated";
+        renderQueue(); renderDetails();
+        showNotice("Обращение передано специалисту в демо-интерфейсе.");
+      });
+    }
+
+    document.getElementById("ticket-search").addEventListener("input", renderQueue);
+    document.getElementById("status-filter").addEventListener("change", renderQueue);
+    document.getElementById("priority-filter").addEventListener("change", renderQueue);
+    document.getElementById("reset-filters").addEventListener("click", () => {
+      document.getElementById("ticket-search").value = "";
+      document.getElementById("status-filter").value = "";
+      document.getElementById("priority-filter").value = "";
+      renderQueue();
+      showNotice("Фильтры сброшены.");
+    });
+    document.getElementById("refresh-ticket").addEventListener("click", () => {
+      renderDetails(); renderAnalysis();
+      showNotice("Демонстрационная карточка обновлена.");
+    });
+    document.querySelectorAll(".nav-item").forEach(button => {
+      button.addEventListener("click", () => {
+        document.querySelectorAll(".nav-item").forEach(item => {
+          item.classList.remove("active");
+          item.removeAttribute("aria-current");
+        });
+        button.classList.add("active");
+        button.setAttribute("aria-current", "page");
+        const section = button.dataset.nav;
+        if (section === "Dashboard") {
+          window.scrollTo({ top: 0, behavior: "smooth" });
+        } else if (section === "Обращения") {
+          document.querySelector(".queue-panel").scrollIntoView({ behavior: "smooth", block: "start" });
+        } else if (section === "База правил") {
+          document.querySelector(".rules-section").scrollIntoView({ behavior: "smooth", block: "center" });
+        } else {
+          showNotice(`${section}: экран пока не реализован в этом макете.`);
+        }
+      });
+    });
+
+    document.querySelectorAll('[data-nav="База правил"]:not(.nav-item)').forEach(link => {
+      link.addEventListener("click", event => {
+        event.preventDefault();
+        document.querySelector(".rules-section").scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+    });
+
+    renderQueue();
+    renderDetails();
+    renderAnalysis();
+  </script>
+</body>
+</html>
