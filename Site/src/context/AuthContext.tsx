@@ -8,7 +8,6 @@ import {
   type ReactNode,
 } from "react";
 import type { Session } from "@supabase/supabase-js";
-import { LockKeyhole } from "lucide-react";
 import { supabase, supabaseAuthEnabled } from "../lib/supabase";
 import { LoadingState } from "../components/UI";
 
@@ -99,7 +98,7 @@ function SignInForm() {
     <main className="auth-gate">
       <section className="panel auth-panel">
         <div className="panel-header">
-          <div className="panel-title"><LockKeyhole size={16} /><span>Вход оператора</span></div>
+          <div className="panel-title"><img className="auth-brand-mark" src="/branding/support-copilot-icon.svg" alt="" /><span>Вход оператора</span></div>
         </div>
         <form className="dialog-form" onSubmit={(event) => void submit(event)}>
           <label className="field-label">Рабочая почта

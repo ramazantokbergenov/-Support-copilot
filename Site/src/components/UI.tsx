@@ -150,6 +150,7 @@ export function MetricCard({
 export function LoadingState({ label = "Загружаем данные" }: { label?: string }) {
   return (
     <div className="loading-state" role="status">
+      <img className="loading-brand-mark" src="/branding/support-copilot-icon.svg" alt="" />
       <LoaderCircle className="spin" size={18} />
       <span>{label}</span>
     </div>
