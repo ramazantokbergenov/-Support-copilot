@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none">
+  <defs>
+    <linearGradient id="shield" x1="42" y1="35" x2="214" y2="223" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#34302A" />
+      <stop offset="1" stop-color="#17191C" />
+    </linearGradient>
+    <linearGradient id="metal" x1="57" y1="40" x2="202" y2="204" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#FFD875" />
+      <stop offset=".48" stop-color="#F3A436" />
+      <stop offset="1" stop-color="#E96828" />
+    </linearGradient>
+  </defs>
+  <path d="M128 13 220 49v68c0 59-37 101-92 126-55-25-92-67-92-126V49l92-36Z" fill="url(#shield)" stroke="url(#metal)" stroke-width="5" />
+  <path d="M163 72h-53c-15 0-23 9-23 23 0 13 11 21 29 21h22c18 0 29 10 29 25 0 16-12 26-30 26H91" stroke="url(#metal)" stroke-linecap="round" stroke-linejoin="round" stroke-width="15" />
+  <path d="m161 73 17-17M163 166l17 17" stroke="url(#metal)" stroke-linecap="round" stroke-width="7" />
+  <circle cx="178" cy="56" r="7" fill="#FFD875" />
+  <circle cx="180" cy="183" r="7" fill="#E96828" />
+  <path d="M128 184v16" stroke="#F3A436" stroke-linecap="round" stroke-width="6" />
+  <circle cx="128" cy="205" r="6" fill="#FFD875" />
+</svg>

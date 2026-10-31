@@ -170,10 +170,10 @@ export function AppShell() {
         <aside className="sidebar">
           <div className="brand-row">
             <NavLink className="brand" to="/" aria-label="Support Copilot, Overview">
-              <span className="brand-mark">SC</span>
+              <img className="brand-mark" src="/branding/support-copilot-icon.svg" alt="" />
               <span className="brand-copy">
                 <strong>Support Copilot</strong>
-                <small>ZHS · GRAND MOBILE</small>
+                <small>AI SUPPORT SYSTEM</small>
               </span>
             </NavLink>
             <IconButton
@@ -253,6 +253,7 @@ export function AppShell() {
         <main className="main-area">
           <header className="topbar">
             <div className="topbar-title">
+              <img className="header-brand-mark" src="/branding/support-copilot-icon.svg" alt="" />
               <IconButton
                 className="mobile-menu"
                 label="Открыть меню"

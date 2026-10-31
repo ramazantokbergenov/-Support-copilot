@@ -44,7 +44,7 @@ button:disabled { opacity: .48; cursor: not-allowed !important; }
 .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 20; display: flex; width: var(--sidebar-width); flex-direction: column; border-right: 1px solid var(--line-soft); background: var(--sidebar); padding: 21px 14px 14px; transition: width .18s ease, transform .2s ease; }
 .brand-row { display: flex; align-items: center; gap: 5px; padding: 0 3px 25px; }
 .brand { display: flex; min-width: 0; flex: 1; align-items: center; gap: 10px; padding: 0 5px; }
-.brand-mark { display: grid; width: 35px; height: 35px; flex: none; place-items: center; border: 1px solid rgba(244,123,60,.3); border-radius: 10px; background: #28211d; color: var(--orange-light); font-family: Manrope, sans-serif; font-size: 11px; font-weight: 800; letter-spacing: -.06em; }
+.brand-mark { width: 38px; height: 38px; flex: none; object-fit: contain; }
 .brand-copy, .profile-copy, .connection-copy { display: grid; min-width: 0; gap: 3px; }
 .brand-copy strong { font-family: Manrope, sans-serif; font-size: 12px; font-weight: 750; letter-spacing: -.025em; white-space: nowrap; }
 .brand-copy small { color: var(--muted); font-size: 9px; font-weight: 600; letter-spacing: .1em; }
@@ -84,6 +84,7 @@ button:disabled { opacity: .48; cursor: not-allowed !important; }
 .sidebar-collapsed .profile-card { justify-content: center; }
 .topbar { position: sticky; top: 0; z-index: 10; display: flex; min-height: 76px; align-items: center; justify-content: space-between; gap: 20px; border-bottom: 1px solid var(--line-soft); background: rgba(17,18,20,.96); padding: 0 32px; backdrop-filter: blur(8px); }
 .topbar-title { display: flex; min-width: 0; align-items: center; gap: 11px; }
+.header-brand-mark { width: 29px; height: 29px; flex: none; object-fit: contain; }
 .breadcrumbs { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; color: var(--subtle); font-size: 9px; }
 .breadcrumbs strong { color: #a9a9ae; font-weight: 550; }
 .breadcrumb-separator { color: #52535a; }
@@ -281,6 +282,7 @@ select option { background: #1b1c20; color: var(--text); }
 .escalation-warning, .draft-warning { display: flex; align-items: flex-start; gap: 8px; border: 1px solid rgba(232,135,135,.18); border-radius: 8px; background: rgba(232,135,135,.06); color: var(--red); padding: 9px; }
 .escalation-warning { margin-top: 10px; }.escalation-warning strong, .draft-warning strong { color: #e99b9b; font-size: 9px; }.escalation-warning p { margin: 4px 0 0; color: #c69595; font-size: 8px; line-height: 1.5; }
 .loading-state { display: flex; min-height: 180px; align-items: center; justify-content: center; gap: 9px; color: var(--muted); font-size: 10px; }
+.loading-brand-mark, .auth-brand-mark { width: 27px; height: 27px; flex: none; object-fit: contain; }
 .spin { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .skeleton-card, .skeleton-panel { display: grid; align-content: start; gap: 12px; }
