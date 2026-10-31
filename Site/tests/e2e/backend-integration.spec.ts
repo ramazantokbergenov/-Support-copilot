@@ -1,12 +1,32 @@
 import { expect, test } from "@playwright/test";
 
+async function signInIfRequired(page: import("@playwright/test").Page) {
+  await page.goto("/");
+  const localUsername = page.getByLabel("Имя оператора");
+  const supabaseEmail = page.getByLabel("Рабочая почта");
+  const loginField = await localUsername.isVisible().catch(() => false)
+    ? localUsername
+    : supabaseEmail;
+  if (!await loginField.isVisible().catch(() => false)) return;
+
+  const username = process.env.SUPPORT_COPILOT_OPERATOR_USERNAME;
+  const password = process.env.SUPPORT_COPILOT_OPERATOR_PASSWORD;
+  if (!username || !password) {
+    throw new Error("Set operator credentials in the environment before running E2E tests.");
+  }
+  await loginField.fill(username);
+  await page.getByLabel("Пароль").fill(password);
+  await page.getByRole("button", { name: "Войти" }).click();
+  await expect(page.getByText("Backend подключён")).toBeVisible();
+}
+
 test("operator can create, analyze, update, and save a ticket draft", async ({ page }) => {
   const playerId = `e2e-player-${Date.now()}`;
   const message = "Прошу проверить блокировку моего аккаунта, не могу войти.";
   const pageErrors: string[] = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
 
-  await page.goto("/");
+  await signInIfRequired(page);
   await expect(page.getByText("Backend подключён")).toBeVisible();
   await page.getByRole("button", { name: "Новое обращение" }).click();
   await page.getByPlaceholder("Укажите ID игрока").fill(playerId);
@@ -31,7 +51,12 @@ test("operator can create, analyze, update, and save a ticket draft", async ({ p
   await page.getByRole("button", { name: "Отметить проверенным" }).click();
   await expect(page.getByText("Проверка записана.")).toBeVisible();
 
-  const detailsResponse = await page.request.get(`http://127.0.0.1:8000/tickets/${encodeURIComponent(ticketId)}`);
+  const accessToken = await page.evaluate(() => sessionStorage.getItem("support-copilot.local-access-token"));
+  expect(accessToken).toBeTruthy();
+  const detailsResponse = await page.request.get(
+    `http://127.0.0.1:8000/tickets/${encodeURIComponent(ticketId)}`,
+    { headers: { Authorization: `Bearer ${accessToken}` } },
+  );
   expect(detailsResponse.ok()).toBeTruthy();
   const details = await detailsResponse.json();
   expect(details.player_id).toBe(playerId);
@@ -43,6 +68,7 @@ test("operator can create, analyze, update, and save a ticket draft", async ({ p
 });
 
 test("knowledge base displays an empty state instead of fabricated citations", async ({ page }) => {
+  await signInIfRequired(page);
   await page.goto("/knowledge");
   await expect(page.getByText("В базе нет активных правил")).toBeVisible();
   await expect(page.getByText("Показываются только опубликованные правила с проверенным источником.")).toBeVisible();

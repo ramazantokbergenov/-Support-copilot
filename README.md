@@ -224,14 +224,16 @@ python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r requirements.txt
 cp .env.example .env.backend
+# Заполните SUPPORT_COPILOT_AUTH_SECRET, SUPPORT_COPILOT_OPERATOR_USERNAME,
+# SUPPORT_COPILOT_OPERATOR_PASSWORD только в ignored .env.backend.
 set -a
 . ./.env.backend
 set +a
 python -m scripts.seed_demo_tickets
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log
 ```
 
-Оставьте `LLM_API_KEY` и `LLM_MODEL` пустыми для offline demo. Локальный API не имеет аутентификации, поэтому запускайте его только на localhost и не используйте реальные обращения.
+Сгенерируйте `SUPPORT_COPILOT_AUTH_SECRET` локально командой `python -c 'import secrets; print(secrets.token_hex(32))'`; пароль оператора должен содержать не менее 12 символов. Не коммитьте эти credentials. Для offline demo оставьте только `LLM_API_KEY` и `LLM_MODEL` пустыми. Локальный API привязан к localhost.
 
 Во втором терминале подключите frontend к локальному API:
 
@@ -243,6 +245,7 @@ npm run dev -- --host 127.0.0.1
 ```
 
 Откройте <http://127.0.0.1:5173>. Пошаговый сценарий показан в [Site/DEMO.md](Site/DEMO.md). В репозитории нет импортированной базы официальных правил: до добавления проверенного источника безопасный результат поиска — отсутствие цитат, а не сгенерированный номер пункта.
+В local mode войдите с operator username/password из `.env.backend`; frontend хранит подписанный часовой Bearer token только в `sessionStorage`.
 
 Для локального Supabase, Edge Function, миграций и загрузки документов используйте [Site/AI_RAG.md](Site/AI_RAG.md). Server-side значения задавайте только в `.env.backend` или `.env.supabase`; `.env.local` содержит только публичные `VITE_*` настройки.
 
@@ -253,6 +256,16 @@ python -m pip install -r requirements-test.txt
 python -m unittest discover -s tests -v
 npm run typecheck
 npm run build
+```
+
+Для Playwright E2E при запущенных Vite/FastAPI загрузите credentials в shell процесса теста и запустите:
+
+```sh
+cd Site
+set -a
+. ./.env.backend
+set +a
+npm run test:e2e
 ```
 
 ## 10. Команда

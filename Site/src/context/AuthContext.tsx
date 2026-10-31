@@ -9,12 +9,21 @@ import {
 } from "react";
 import type { Session } from "@supabase/supabase-js";
 import { supabase, supabaseAuthEnabled } from "../lib/supabase";
+import {
+  clearLocalAccessToken,
+  getLocalAccessToken,
+  localAuthEnabled,
+  signInLocal,
+} from "../lib/localAuth";
 import { LoadingState } from "../components/UI";
 
 interface AuthValue {
   enabled: boolean;
+  authenticated: boolean;
   loading: boolean;
+  localMode: boolean;
   session: Session | null;
+  signIn: (username: string, password: string) => Promise<void>;
   signOut: () => Promise<void>;
 }
 
@@ -22,6 +31,7 @@ const AuthContext = createContext<AuthValue | null>(null);
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
+  const [localToken, setLocalToken] = useState<string | null>(getLocalAccessToken);
   const [loading, setLoading] = useState(supabaseAuthEnabled);
 
   useEffect(() => {
@@ -44,15 +54,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<AuthValue>(() => ({
-    enabled: supabaseAuthEnabled,
+    enabled: supabaseAuthEnabled || localAuthEnabled,
+    authenticated: supabaseAuthEnabled ? Boolean(session) : Boolean(localToken),
     loading,
+    localMode: !supabaseAuthEnabled && localAuthEnabled,
     session,
-    signOut: async () => {
-      if (!supabase) return;
-      const { error } = await supabase.auth.signOut();
-      if (error) throw error;
+    signIn: async (username, password) => {
+      if (supabase) {
+        const { error } = await supabase.auth.signInWithPassword({
+          email: username.trim(),
+          password,
+        });
+        if (error) throw error;
+        return;
+      }
+      setLocalToken(await signInLocal(username.trim(), password));
     },
-  }), [loading, session]);
+    signOut: async () => {
+      if (supabase) {
+        const { error } = await supabase.auth.signOut();
+        if (error) throw error;
+      } else {
+        clearLocalAccessToken();
+        setLocalToken(null);
+      }
+    },
+  }), [loading, localToken, session]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
@@ -64,13 +91,14 @@ export function useAuth() {
 }
 
 export function AuthGate({ children }: { children: ReactNode }) {
-  const { enabled, loading, session } = useAuth();
+  const { enabled, loading, authenticated } = useAuth();
   if (loading) return <LoadingState label="Проверяем сессию оператора" />;
-  if (!enabled || session) return children;
+  if (!enabled || authenticated) return children;
   return <SignInForm />;
 }
 
 function SignInForm() {
+  const { localMode, signIn } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -78,15 +106,11 @@ function SignInForm() {
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (!supabase || busy) return;
+    if (busy) return;
     setBusy(true);
     setError(null);
     try {
-      const { error: authError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
-      });
-      if (authError) throw authError;
+      await signIn(email, password);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Не удалось выполнить вход.");
     } finally {
@@ -101,8 +125,8 @@ function SignInForm() {
           <div className="panel-title"><img className="auth-brand-mark" src="/branding/support-copilot-icon.svg" alt="" /><span>Вход оператора</span></div>
         </div>
         <form className="dialog-form" onSubmit={(event) => void submit(event)}>
-          <label className="field-label">Рабочая почта
-            <input autoComplete="username" autoFocus onChange={(event) => setEmail(event.target.value)} required type="email" value={email} />
+          <label className="field-label">{localMode ? "Имя оператора" : "Рабочая почта"}
+            <input autoComplete="username" autoFocus onChange={(event) => setEmail(event.target.value)} required type={localMode ? "text" : "email"} value={email} />
           </label>
           <label className="field-label">Пароль
             <input autoComplete="current-password" onChange={(event) => setPassword(event.target.value)} required type="password" value={password} />

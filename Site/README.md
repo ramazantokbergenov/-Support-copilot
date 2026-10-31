@@ -14,8 +14,19 @@
 python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r requirements.txt
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+cp .env.example .env.backend
 ```
+
+В ignored `.env.backend` задайте `SUPPORT_COPILOT_AUTH_SECRET`, `SUPPORT_COPILOT_OPERATOR_USERNAME` и `SUPPORT_COPILOT_OPERATOR_PASSWORD`. Secret должен содержать не менее 32 случайных символов; сгенерируйте его локально командой `python -c 'import secrets; print(secrets.token_hex(32))'`. Пароль оператора должен содержать не менее 12 символов. Экспортируйте настройки и запускайте API только на loopback:
+
+```sh
+set -a
+. ./.env.backend
+set +a
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log
+```
+
+Все маршруты, кроме `GET /health`, `POST /auth/token` и CORS preflight, требуют `Authorization: Bearer <token>`. `POST /auth/token` принимает JSON `{"username":"<operator>","password":"<configured-password>"}` и выдаёт HS256 token на один час. `POST /tickets` принимает optional `Idempotency-Key` длиной 8–128 безопасных символов: повтор с тем же payload возвращает прежний ticket; тот же ключ с другим payload получает 409.
 
 По умолчанию SQLite-файл `support_copilot.db` создаётся в текущей папке. Для другого расположения задайте переменную `SUPPORT_COPILOT_DB` до запуска. Сервер привязан к localhost; перед сетевым или production-развёртыванием необходимы аутентификация, авторизация и защищённое хранилище.
 

@@ -1,23 +1,39 @@
 import os
+import hashlib
+import json
+import re
 import sqlite3
 import uuid
 from datetime import UTC, datetime
 from urllib.parse import quote
 
-from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
+from app.auth import (
+    TOKEN_TTL_SECONDS,
+    AuthenticationConfigurationError,
+    AuthenticationError,
+    issue_access_token,
+    verify_access_token,
+)
 from app.ai_engine import AnalysisResult, SupportAnalysisEngine
 from app.ai_engine.models import StructuredAnalysisResult
-from app.database import DEFAULT_DATABASE_PATH, TicketRepository
+from app.database import (
+    DEFAULT_DATABASE_PATH,
+    IdempotencyConflictError,
+    TicketRepository,
+)
 from app.models import (
     AnalysisSubmission,
+    AccessTokenResponse,
     DecisionSubmission,
     DraftBody,
     ErrorDetail,
     ErrorResponse,
+    LocalTokenSubmission,
     RuleList,
     RuleRecord,
     TicketDetail,
@@ -32,6 +48,7 @@ from app.models import (
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_TOTAL_ATTACHMENT_BYTES = 25 * 1024 * 1024
 MAX_ATTACHMENTS = 5
+IDEMPOTENCY_KEY_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{8,128}$")
 ALLOWED_ATTACHMENT_TYPES = {
     "image/jpeg",
     "image/png",
@@ -59,6 +76,32 @@ def attachment_content_matches(content_type: str, content: bytes) -> bool:
     return False
 
 
+def ticket_request_hash(
+    *,
+    player_id: str,
+    message: str,
+    category: str | None,
+    priority: str,
+    attachments: list[dict],
+) -> str:
+    request_data = {
+        "player_id": player_id,
+        "message": message,
+        "category": category,
+        "priority": priority,
+        "attachments": [
+            {
+                "filename": item["filename"],
+                "content_type": item["content_type"],
+                "sha256": hashlib.sha256(item["content"]).hexdigest(),
+            }
+            for item in attachments
+        ],
+    }
+    canonical = json.dumps(request_data, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
 def create_app(repository: TicketRepository | None = None) -> FastAPI:
     application = FastAPI(
         title="ZHS Support Copilot API",
@@ -76,12 +119,14 @@ def create_app(repository: TicketRepository | None = None) -> FastAPI:
         ).split(",")
         if origin.strip()
     ]
+    if not allowed_origins or "*" in allowed_origins:
+        raise ValueError("ALLOWED_ORIGINS must contain explicit origins and cannot include '*'")
     application.add_middleware(
         CORSMiddleware,
         allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PUT", "PATCH", "OPTIONS"],
-        allow_headers=["Authorization", "Content-Type", "Accept"],
+        allow_headers=["Authorization", "Content-Type", "Accept", "Idempotency-Key"],
     )
     application.state.repository = repository
 
@@ -89,6 +134,23 @@ def create_app(repository: TicketRepository | None = None) -> FastAPI:
         if application.state.repository is None:
             application.state.repository = TicketRepository(DEFAULT_DATABASE_PATH)
         return application.state.repository
+
+    @application.middleware("http")
+    async def require_bearer_token(request: Request, call_next):
+        is_public_health = request.method == "GET" and request.url.path == "/health"
+        is_public_login = request.method == "POST" and request.url.path == "/auth/token"
+        if request.method == "OPTIONS" or is_public_health or is_public_login:
+            return await call_next(request)
+
+        authorization = request.headers.get("Authorization", "")
+        scheme, separator, token = authorization.partition(" ")
+        if not separator or scheme.casefold() != "bearer" or not token.strip():
+            return _unauthorized_response()
+        try:
+            request.state.operator_id = verify_access_token(token.strip())
+        except AuthenticationError:
+            return _unauthorized_response()
+        return await call_next(request)
 
     @application.exception_handler(RequestValidationError)
     async def validation_error_handler(
@@ -146,6 +208,33 @@ def create_app(repository: TicketRepository | None = None) -> FastAPI:
             ) from exc
         return {"status": "ok"}
 
+    @application.post("/auth/token", response_model=AccessTokenResponse)
+    def create_access_token(credentials: LocalTokenSubmission) -> dict[str, str | int]:
+        try:
+            token = issue_access_token(credentials.username, credentials.password)
+        except AuthenticationConfigurationError as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "authentication_unavailable",
+                    "message": "Local operator authentication is not configured",
+                },
+            ) from exc
+        except AuthenticationError as exc:
+            raise HTTPException(
+                status_code=401,
+                detail={
+                    "code": "invalid_credentials",
+                    "message": "Invalid username or password",
+                },
+                headers={"WWW-Authenticate": "Bearer"},
+            ) from exc
+        return {
+            "access_token": token,
+            "token_type": "bearer",
+            "expires_in": TOKEN_TTL_SECONDS,
+        }
+
     @application.post(
         "/tickets",
         response_model=TicketDetail,
@@ -158,6 +247,7 @@ def create_app(repository: TicketRepository | None = None) -> FastAPI:
         category: str | None = Form(default=None, max_length=100),
         priority: TicketPriority = Form(default=TicketPriority.NORMAL),
         attachments: list[UploadFile] | None = File(default=None),
+        idempotency_key: str | None = Header(default=None, alias="Idempotency-Key"),
     ) -> dict:
         player_id = player_id.strip()
         message = message.strip()
@@ -167,6 +257,16 @@ def create_app(repository: TicketRepository | None = None) -> FastAPI:
                 detail={
                     "code": "validation_error",
                     "message": "player_id and message must not be blank",
+                },
+            )
+        if idempotency_key is not None and not IDEMPOTENCY_KEY_PATTERN.fullmatch(
+            idempotency_key
+        ):
+            raise HTTPException(
+                status_code=422,
+                detail={
+                    "code": "invalid_idempotency_key",
+                    "message": "Idempotency-Key must be 8-128 safe characters",
                 },
             )
         uploads = attachments or []
@@ -231,15 +331,38 @@ def create_app(repository: TicketRepository | None = None) -> FastAPI:
                     "content": content,
                 }
             )
-        ticket = get_repository().create_ticket(
-            ticket_id=str(uuid.uuid4()),
-            player_id=player_id,
-            message=message,
-            category=category.strip() if category and category.strip() else None,
-            priority=priority.value,
-            created_at=datetime.now(UTC).isoformat(),
-            attachments=stored_attachments,
+        normalized_category = category.strip() if category and category.strip() else None
+        request_hash = (
+            ticket_request_hash(
+                player_id=player_id,
+                message=message,
+                category=normalized_category,
+                priority=priority.value,
+                attachments=stored_attachments,
+            )
+            if idempotency_key
+            else None
         )
+        try:
+            ticket = get_repository().create_ticket(
+                ticket_id=str(uuid.uuid4()),
+                player_id=player_id,
+                message=message,
+                category=normalized_category,
+                priority=priority.value,
+                created_at=datetime.now(UTC).isoformat(),
+                attachments=stored_attachments,
+                idempotency_key=idempotency_key,
+                request_hash=request_hash,
+            )
+        except IdempotencyConflictError as exc:
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "code": "idempotency_conflict",
+                    "message": "Idempotency-Key was already used for a different request",
+                },
+            ) from exc
         return ticket
 
     @application.get("/tickets", response_model=list[TicketSummary])
@@ -565,6 +688,20 @@ def create_app(repository: TicketRepository | None = None) -> FastAPI:
         return {"items": validated_items, "count": len(validated_items)}
 
     return application
+
+
+def _unauthorized_response() -> JSONResponse:
+    body = ErrorResponse(
+        error=ErrorDetail(
+            code="unauthorized",
+            message="A valid bearer token is required",
+        )
+    )
+    return JSONResponse(
+        content=body.model_dump(mode="json"),
+        status_code=401,
+        headers={"WWW-Authenticate": "Bearer"},
+    )
 
 
 app = create_app()

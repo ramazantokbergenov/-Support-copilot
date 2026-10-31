@@ -1,3 +1,6 @@
+import asyncio
+import os
+import secrets
 import sqlite3
 import tempfile
 import unittest
@@ -14,23 +17,152 @@ class TicketApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repository = TicketRepository(Path(self.temp_dir.name) / "test.db")
-        transport = httpx.ASGITransport(app=create_app(self.repository))
+        self.auth_password = secrets.token_urlsafe(24)
+        self.auth_environment = patch.dict(
+            os.environ,
+            {
+                "SUPPORT_COPILOT_AUTH_SECRET": secrets.token_urlsafe(48),
+                "SUPPORT_COPILOT_OPERATOR_USERNAME": "test-operator",
+                "SUPPORT_COPILOT_OPERATOR_PASSWORD": self.auth_password,
+            },
+        )
+        self.auth_environment.start()
+        self.app = create_app(self.repository)
+        transport = httpx.ASGITransport(app=self.app)
         self.client = httpx.AsyncClient(transport=transport, base_url="http://test")
+        token_response = await self.client.post(
+            "/auth/token",
+            json={"username": "test-operator", "password": self.auth_password},
+        )
+        self.assertEqual(token_response.status_code, 200, token_response.text)
+        self.client.headers["Authorization"] = f"Bearer {token_response.json()['access_token']}"
 
     async def asyncTearDown(self) -> None:
         await self.client.aclose()
         self.temp_dir.cleanup()
+        self.auth_environment.stop()
+
+    async def test_ticket_routes_require_valid_bearer_authentication(self) -> None:
+        anonymous = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app), base_url="http://test"
+        )
+        try:
+            missing_token = await anonymous.get("/tickets")
+            invalid_token = await anonymous.get(
+                "/tickets", headers={"Authorization": "Bearer invalid.token.value"}
+            )
+            unauthorized_create = await anonymous.post(
+                "/tickets",
+                data={"player_id": "unauthorized", "message": "Must be rejected"},
+            )
+            await self.create_ticket()
+            ticket_id = (await self.client.get("/tickets")).json()[0]["ticket_id"]
+            unauthorized_update = await anonymous.patch(
+                f"/tickets/{ticket_id}/status", json={"status": "Closed"}
+            )
+            ticket_details = await self.client.get(f"/tickets/{ticket_id}")
+            health = await anonymous.get("/health")
+        finally:
+            await anonymous.aclose()
+
+        self.assertEqual(missing_token.status_code, 401)
+        self.assertEqual(invalid_token.status_code, 401)
+        self.assertEqual(unauthorized_create.status_code, 401)
+        self.assertEqual(unauthorized_update.status_code, 401)
+        self.assertEqual(ticket_details.json()["status"], "New")
+        self.assertEqual(health.status_code, 200)
+        self.assertEqual(health.json(), {"status": "ok"})
+
+    async def test_invalid_local_login_does_not_issue_a_token(self) -> None:
+        response = await self.client.post(
+            "/auth/token", json={"username": "test-operator", "password": "wrong"}
+        )
+        unicode_password = await self.client.post(
+            "/auth/token",
+            json={"username": "test-operator", "password": "пароль-неверный"},
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["error"]["code"], "invalid_credentials")
+        self.assertEqual(unicode_password.status_code, 401)
+        self.assertEqual(unicode_password.json()["error"]["code"], "invalid_credentials")
 
     async def create_ticket(
-        self, *, files: list[tuple[str, tuple]] | None = None
+        self,
+        *,
+        files: list[tuple[str, tuple]] | None = None,
+        idempotency_key: str | None = None,
     ) -> dict:
+        headers = (
+            {"Idempotency-Key": idempotency_key} if idempotency_key else None
+        )
         response = await self.client.post(
             "/tickets",
             data={"player_id": "player-1", "message": "Please review this report"},
             files=files,
+            headers=headers,
         )
         self.assertEqual(response.status_code, 201, response.text)
         return response.json()
+
+    async def test_ticket_creation_is_idempotent(self) -> None:
+        headers = {"Idempotency-Key": "qa-ticket-create-0001"}
+        payload = {"player_id": "player-idempotent", "message": "Same request"}
+        first = await self.client.post("/tickets", data=payload, headers=headers)
+        repeated = await self.client.post("/tickets", data=payload, headers=headers)
+        different_payload = await self.client.post(
+            "/tickets",
+            data={"player_id": "player-idempotent", "message": "Changed request"},
+            headers=headers,
+        )
+        listed = await self.client.get("/tickets?q=player-idempotent")
+
+        self.assertEqual(first.status_code, 201, first.text)
+        self.assertEqual(repeated.status_code, 201, repeated.text)
+        self.assertEqual(first.json()["ticket_id"], repeated.json()["ticket_id"])
+        self.assertEqual(different_payload.status_code, 409)
+        self.assertEqual(different_payload.json()["error"]["code"], "idempotency_conflict")
+        self.assertEqual(len(listed.json()), 1)
+
+    async def test_concurrent_ticket_creation_with_same_key_is_idempotent(self) -> None:
+        headers = {"Idempotency-Key": "qa-ticket-concurrent-0001"}
+        payload = {"player_id": "player-concurrent", "message": "Concurrent request"}
+        responses = await asyncio.gather(
+            *(
+                self.client.post("/tickets", data=payload, headers=headers)
+                for _ in range(5)
+            )
+        )
+
+        self.assertTrue(all(response.status_code == 201 for response in responses))
+        ticket_ids = {response.json()["ticket_id"] for response in responses}
+        self.assertEqual(len(ticket_ids), 1)
+        listed = await self.client.get("/tickets?q=player-concurrent")
+        self.assertEqual(len(listed.json()), 1)
+
+    async def test_idempotency_key_validation_and_cors(self) -> None:
+        invalid_key = await self.client.post(
+            "/tickets",
+            data={"player_id": "player-1", "message": "Invalid key"},
+            headers={"Idempotency-Key": "short"},
+        )
+        preflight = await self.client.options(
+            "/tickets",
+            headers={
+                "Origin": "http://localhost:5173",
+                "Access-Control-Request-Method": "POST",
+                "Access-Control-Request-Headers": "authorization,content-type,idempotency-key",
+            },
+        )
+
+        self.assertEqual(invalid_key.status_code, 422)
+        self.assertEqual(preflight.status_code, 200)
+        self.assertIn("idempotency-key", preflight.headers["access-control-allow-headers"].casefold())
+
+    async def test_cors_configuration_rejects_wildcard_origin(self) -> None:
+        with patch.dict(os.environ, {"ALLOWED_ORIGINS": "*"}):
+            with self.assertRaisesRegex(ValueError, "explicit origins"):
+                create_app(self.repository)
 
     async def test_create_list_status_and_details(self) -> None:
         ticket = await self.create_ticket()

@@ -29,9 +29,17 @@ VITE_SUPABASE_ANON_KEY=<public-anon-key>
 npm run typecheck
 npm run build
 npx playwright install chromium
+```
+
+Для E2E должны быть запущены Vite/FastAPI на портах `5173`/`8000`. Из `Site/` загрузите operator credentials только в shell процесса теста и запустите:
+
+```sh
+set -a
+. ./.env.backend
+set +a
 npm run test:e2e
 ```
 
-E2E тесты используют установленный Chromium и запущенные Vite/FastAPI на портах `5173`/`8000`. В Linux может потребоваться установка системных библиотек Chromium командой `npx playwright install-deps chromium` из окружения с разрешённым управлением пакетами.
+Тесты используют установленный Chromium. В Linux может потребоваться установка системных библиотек командой `npx playwright install-deps chromium` из окружения с разрешённым управлением пакетами.
 
 UI поиска/аналитики вне списка обращений агрегирует последние 100 записей; точный общий count очереди приходит от Backend. Отдельный endpoint управления командой/назначениями не реализован. Автоматической отправки ответа игроку нет.

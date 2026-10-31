@@ -12,6 +12,7 @@ import type {
   TicketSummary,
 } from "../types";
 import { getApiBaseUrl, supabase } from "./supabase";
+import { getLocalAccessToken } from "./localAuth";
 
 export class ApiError extends Error {
   constructor(message: string, readonly status?: number, readonly code?: string) {
@@ -49,6 +50,9 @@ async function requestHeaders(body?: BodyInit | null) {
     if (!token) throw new ApiError("Войдите в систему, чтобы продолжить.", 401, "unauthorized");
     headers.set("Authorization", `Bearer ${token}`);
     headers.set("apikey", import.meta.env.VITE_SUPABASE_ANON_KEY ?? "");
+  } else {
+    const token = getLocalAccessToken();
+    if (token) headers.set("Authorization", `Bearer ${token}`);
   }
   return headers;
 }
@@ -138,7 +142,11 @@ export function createTicket(input: CreateTicketInput): Promise<TicketDetail> {
   body.set("priority", input.priority);
   if (input.category) body.set("category", input.category);
   input.attachments.forEach((file) => body.append("attachments", file, file.name));
-  return apiRequest<TicketDetail>("/tickets", { method: "POST", body });
+  return apiRequest<TicketDetail>("/tickets", {
+    method: "POST",
+    body,
+    headers: { "Idempotency-Key": crypto.randomUUID() },
+  });
 }
 
 export function updateTicketStatus(ticketId: string, status: TicketStatus) {

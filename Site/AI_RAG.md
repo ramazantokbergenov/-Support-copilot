@@ -59,6 +59,8 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 - `OFFICIAL_RULE_HOSTS`: comma-separated allowlisted hostnames for rule ingestion, without URL paths.
 - `ALLOWED_ORIGINS`: comma-separated browser origins allowed by Edge CORS.
 - `SUPPORT_COPILOT_DB`: optional local SQLite path.
+- `SUPPORT_COPILOT_AUTH_SECRET`: local FastAPI HS256 signing secret, at least 32 random characters.
+- `SUPPORT_COPILOT_OPERATOR_USERNAME` / `SUPPORT_COPILOT_OPERATOR_PASSWORD`: local operator credentials; password must be at least 12 characters.
 
 The Python `AnalysisProvider` protocol is the replacement boundary for local model adapters. Its supplied implementation speaks the OpenAI-compatible chat-completions JSON mode. The Supabase function uses the same compatible HTTP shape and can be pointed to another compatible provider through `LLM_API_BASE_URL`.
 

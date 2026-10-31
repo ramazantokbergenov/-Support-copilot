@@ -134,3 +134,16 @@ class ErrorDetail(BaseModel):
 
 class ErrorResponse(BaseModel):
     error: ErrorDetail
+
+
+class LocalTokenSubmission(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    username: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=128)]
+    password: Annotated[str, StringConstraints(min_length=1, max_length=256)]
+
+
+class AccessTokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    expires_in: int

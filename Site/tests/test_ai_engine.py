@@ -1,7 +1,10 @@
+import os
+import secrets
 import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import patch
 
 import httpx
 
@@ -294,10 +297,27 @@ class AiApiIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repository = TicketRepository(Path(self.temp_dir.name) / "test.db")
+        self.auth_password = secrets.token_urlsafe(24)
+        self.auth_environment = patch.dict(
+            os.environ,
+            {
+                "SUPPORT_COPILOT_AUTH_SECRET": secrets.token_urlsafe(48),
+                "SUPPORT_COPILOT_OPERATOR_USERNAME": "test-operator",
+                "SUPPORT_COPILOT_OPERATOR_PASSWORD": self.auth_password,
+            },
+        )
+        self.auth_environment.start()
+        self.app = create_app(self.repository)
         self.client = httpx.AsyncClient(
-            transport=httpx.ASGITransport(app=create_app(self.repository)),
+            transport=httpx.ASGITransport(app=self.app),
             base_url="http://test",
         )
+        token = await self.client.post(
+            "/auth/token",
+            json={"username": "test-operator", "password": self.auth_password},
+        )
+        self.assertEqual(token.status_code, 200, token.text)
+        self.client.headers["Authorization"] = f"Bearer {token.json()['access_token']}"
         created = await self.client.post(
             "/tickets",
             data={
@@ -311,6 +331,7 @@ class AiApiIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         await self.client.aclose()
         self.temp_dir.cleanup()
+        self.auth_environment.stop()
 
     async def test_analysis_is_schema_validated_and_saved_for_backend(self) -> None:
         response = await self.client.post(

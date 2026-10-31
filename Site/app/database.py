@@ -13,6 +13,10 @@ DEFAULT_DATABASE_PATH = Path(
 )
 
 
+class IdempotencyConflictError(Exception):
+    pass
+
+
 class TicketRepository:
     def __init__(self, database_path: str | Path = DEFAULT_DATABASE_PATH) -> None:
         self.database_path = str(database_path)
@@ -63,6 +67,13 @@ class TicketRepository:
                     content_type TEXT NOT NULL,
                     size_bytes INTEGER NOT NULL,
                     content BLOB NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS ticket_idempotency (
+                    idempotency_key TEXT PRIMARY KEY,
+                    request_hash TEXT NOT NULL,
+                    ticket_id TEXT NOT NULL REFERENCES tickets(ticket_id) ON DELETE CASCADE,
+                    created_at TEXT NOT NULL
                 );
 
                 CREATE TABLE IF NOT EXISTS rules (
@@ -153,35 +164,61 @@ class TicketRepository:
         priority: str,
         created_at: str,
         attachments: list[dict[str, Any]],
+        idempotency_key: str | None = None,
+        request_hash: str | None = None,
     ) -> dict[str, Any]:
         with self._connection() as connection:
-            connection.execute(
-                """
-                INSERT INTO tickets
-                    (ticket_id, player_id, message, category, priority, status, created_at)
-                VALUES (?, ?, ?, ?, ?, 'New', ?)
-                """,
-                (ticket_id, player_id, message, category, priority, created_at),
-            )
-            connection.executemany(
-                """
-                INSERT INTO attachments
-                    (attachment_id, ticket_id, filename, content_type, size_bytes, content)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                [
-                    (
-                        item["attachment_id"],
-                        ticket_id,
-                        item["filename"],
-                        item["content_type"],
-                        item["size_bytes"],
-                        item["content"],
+            connection.execute("BEGIN IMMEDIATE")
+            existing_ticket_id: str | None = None
+            if idempotency_key:
+                if request_hash is None:
+                    raise ValueError("request_hash is required with an idempotency key")
+                existing = connection.execute(
+                    "SELECT request_hash, ticket_id FROM ticket_idempotency WHERE idempotency_key = ?",
+                    (idempotency_key,),
+                ).fetchone()
+                if existing is not None:
+                    if existing["request_hash"] != request_hash:
+                        raise IdempotencyConflictError
+                    existing_ticket_id = existing["ticket_id"]
+
+            if existing_ticket_id is None:
+                connection.execute(
+                    """
+                    INSERT INTO tickets
+                        (ticket_id, player_id, message, category, priority, status, created_at)
+                    VALUES (?, ?, ?, ?, ?, 'New', ?)
+                    """,
+                    (ticket_id, player_id, message, category, priority, created_at),
+                )
+                connection.executemany(
+                    """
+                    INSERT INTO attachments
+                        (attachment_id, ticket_id, filename, content_type, size_bytes, content)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    """,
+                    [
+                        (
+                            item["attachment_id"],
+                            ticket_id,
+                            item["filename"],
+                            item["content_type"],
+                            item["size_bytes"],
+                            item["content"],
+                        )
+                        for item in attachments
+                    ],
+                )
+                if idempotency_key:
+                    connection.execute(
+                        """INSERT INTO ticket_idempotency
+                           (idempotency_key, request_hash, ticket_id, created_at)
+                           VALUES (?, ?, ?, ?)""",
+                        (idempotency_key, request_hash, ticket_id, created_at),
                     )
-                    for item in attachments
-                ],
-            )
-        ticket = self.get_ticket(ticket_id)
+                existing_ticket_id = ticket_id
+
+        ticket = self.get_ticket(existing_ticket_id)
         if ticket is None:
             raise RuntimeError("Created ticket could not be read from the database")
         return ticket

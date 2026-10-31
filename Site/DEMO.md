@@ -13,11 +13,13 @@ python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install -r requirements.txt
 cp .env.example .env.backend
+# Set SUPPORT_COPILOT_AUTH_SECRET, SUPPORT_COPILOT_OPERATOR_USERNAME and
+# SUPPORT_COPILOT_OPERATOR_PASSWORD in the ignored .env.backend file first.
 set -a
 . ./.env.backend
 set +a
 python -m scripts.seed_demo_tickets
-python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000 --no-access-log
 ```
 
 Leave `LLM_API_KEY` and `LLM_MODEL` empty for the deterministic offline analysis. In another terminal:
