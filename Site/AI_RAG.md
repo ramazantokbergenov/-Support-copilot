@@ -37,14 +37,14 @@ Rule citations are accepted only from active indexed documents with HTTPS source
 
 ## Configuration
 
-Start from `.env.example` and put real values in an ignored local file or in the deployment secret manager. Never set server keys in `Site/src`, Vite variables, or browser storage.
+Start from `.env.example` and put local FastAPI values in ignored `.env.backend`, or local Edge Function values in ignored `.env.supabase`. Keep `.env.local` exclusively for Vite frontend values copied from `frontend.env.example`. Use the deployment secret manager for hosted secrets. Never set server keys in `Site/src`, Vite variables, or browser storage.
 
-For a local shell, create `.env.local` from the template, fill only server-side values, then export them before starting FastAPI or the ingestion CLI:
+For local FastAPI, create `.env.backend` from `.env.example` and export those server-side values before starting the API or ingestion CLI. Keep `.env.local` exclusively for Vite values copied from `frontend.env.example`; never load `.env.backend` into frontend tooling. For a local Supabase Edge Function, use `.env.supabase` as the function environment file:
 
 ```sh
-cp .env.example .env.local
+cp .env.example .env.backend
 set -a
-. ./.env.local
+. ./.env.backend
 set +a
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
@@ -69,7 +69,8 @@ Run these commands from `Site/` with Supabase CLI installed:
 ```sh
 supabase start
 supabase db reset
-supabase functions serve api --env-file .env.local
+cp .env.example .env.supabase
+supabase functions serve api --env-file .env.supabase
 ```
 
 For a hosted project, apply migrations and deploy the API function:

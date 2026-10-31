@@ -161,6 +161,22 @@ class StructuredAnalysisServiceTests(unittest.TestCase):
         self.assertTrue(result.missing_information_questions)
         self.assertTrue(result.human_review_required)
 
+    def test_six_scenario_drafts_match_russian_ticket_language(self) -> None:
+        scenarios = (
+            ("T1", "Прошу обжаловать бан за читерство."),
+            ("T2", "Игрок оскорблял меня в чате."),
+            ("T3", "Жалоба на администратора: он некорректно общался."),
+            ("T4", "Мой аккаунт взломали, я не могу войти."),
+            ("T5", "Игрок читерит и получает нечестное преимущество."),
+            ("T6", "Помогите разобраться, пожалуйста."),
+        )
+        for ticket_id, message in scenarios:
+            with self.subTest(ticket_id=ticket_id):
+                result = self.analyze(ticket_id, message)
+                self.assertEqual(result.language, SupportLanguage.RU)
+                self.assertTrue(result.draft_reply.startswith("Здравствуйте."))
+                self.assertTrue(result.human_review_required)
+
     def test_kazakh_and_uzbek_languages_are_detected(self) -> None:
         kazakh = self.analyze("KK", "Ойыншымның аккаунтын бұзып кірді")
         uzbek = self.analyze("UZ", "Akkauntimga buzib kirishdi")

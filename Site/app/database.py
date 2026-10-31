@@ -139,6 +139,10 @@ class TicketRepository:
                     "ALTER TABLE tickets ADD COLUMN ai_analysis_json TEXT"
                 )
 
+    def health_check(self) -> None:
+        with self._connection() as connection:
+            connection.execute("SELECT 1").fetchone()
+
     def create_ticket(
         self,
         *,

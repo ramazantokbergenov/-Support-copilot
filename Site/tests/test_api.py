@@ -1,6 +1,8 @@
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import httpx
 
@@ -11,8 +13,8 @@ from app.main import create_app
 class TicketApiTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
-        repository = TicketRepository(Path(self.temp_dir.name) / "test.db")
-        transport = httpx.ASGITransport(app=create_app(repository))
+        self.repository = TicketRepository(Path(self.temp_dir.name) / "test.db")
+        transport = httpx.ASGITransport(app=create_app(self.repository))
         self.client = httpx.AsyncClient(transport=transport, base_url="http://test")
 
     async def asyncTearDown(self) -> None:
@@ -52,15 +54,65 @@ class TicketApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(details.status_code, 200)
         self.assertEqual(details.json()["message"], "Please review this report")
 
+    async def test_health_check(self) -> None:
+        response = await self.client.get("/health")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), {"status": "ok"})
+
+    async def test_health_check_reports_database_failure(self) -> None:
+        class UnavailableRepository:
+            def health_check(self) -> None:
+                raise sqlite3.OperationalError("database is unavailable")
+
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=create_app(UnavailableRepository())),
+            base_url="http://test",
+        )
+        try:
+            response = await client.get("/health")
+        finally:
+            await client.aclose()
+
+        self.assertEqual(response.status_code, 503)
+        self.assertEqual(response.json()["error"]["code"], "database_unavailable")
+
+    async def test_invalid_and_missing_status_updates_are_rejected(self) -> None:
+        ticket = await self.create_ticket()
+        ticket_id = ticket["ticket_id"]
+
+        invalid = await self.client.patch(
+            f"/tickets/{ticket_id}/status", json={"status": "Unknown"}
+        )
+        missing = await self.client.patch(
+            "/tickets/missing/status", json={"status": "Processing"}
+        )
+        unchanged = await self.client.get(f"/tickets/{ticket_id}")
+
+        self.assertEqual(invalid.status_code, 422)
+        self.assertEqual(missing.status_code, 404)
+        self.assertEqual(unchanged.json()["status"], "New")
+
+    async def test_reply_generation_requires_analysis(self) -> None:
+        ticket = await self.create_ticket()
+        response = await self.client.post(
+            f"/tickets/{ticket['ticket_id']}/generate-reply", json={}
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "analysis_required")
+
     async def test_ticket_search_matches_player_and_message(self) -> None:
         await self.create_ticket()
         by_player = await self.client.get("/tickets?q=player-1")
         by_message = await self.client.get("/tickets?q=review%20this%20report")
         no_match = await self.client.get("/tickets?q=missing-player")
+        injection_like = await self.client.get("/tickets", params={"q": "' OR 1=1 --"})
 
         self.assertEqual(len(by_player.json()), 1)
         self.assertEqual(len(by_message.json()), 1)
         self.assertEqual(no_match.json(), [])
+        self.assertEqual(injection_like.json(), [])
 
     async def test_draft_decision_note_and_event_flow(self) -> None:
         ticket = await self.create_ticket()
@@ -141,6 +193,60 @@ class TicketApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(events.status_code, 200, events.text)
         self.assertTrue(any(event["action"] == "operator.mark_reviewed" for event in events.json()))
 
+    async def test_full_complaint_to_review_and_status_workflow(self) -> None:
+        excerpt = "Бан за читерство рассматривается по процедуре обжалования."
+        with self.repository._connection() as connection:
+            connection.execute(
+                """INSERT INTO rules
+                   (document_name, rule_id, rule_title, rule_text, source_url, language, version_or_date)
+                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    "QA fixture rules",
+                    "QA-1",
+                    "Ban appeal",
+                    excerpt,
+                    "https://rules.example.test/fixture",
+                    "ru",
+                    "QA fixture version 1",
+                ),
+            )
+        created = await self.client.post(
+            "/tickets",
+            data={
+                "player_id": "workflow-player",
+                "message": "Прошу обжаловать бан за читерство.",
+            },
+        )
+        self.assertEqual(created.status_code, 201, created.text)
+        ticket_id = created.json()["ticket_id"]
+
+        with patch.dict("os.environ", {"LLM_API_KEY": "", "LLM_MODEL": ""}):
+            analysis = await self.client.post(
+                f"/tickets/{ticket_id}/analyze-structured"
+            )
+            self.assertEqual(analysis.status_code, 200, analysis.text)
+            self.assertEqual(analysis.json()["rule_references"][0]["exact_excerpt"], excerpt)
+
+            generated = await self.client.post(
+                f"/tickets/{ticket_id}/generate-reply", json={}
+            )
+            self.assertEqual(generated.status_code, 201, generated.text)
+            self.assertIn("черновик", generated.json()["body"].casefold())
+            self.assertIn("QA-1", generated.json()["body"])
+
+        reviewed = await self.client.post(
+            f"/tickets/{ticket_id}/decisions",
+            json={"decision": "mark_reviewed", "draft_id": generated.json()["id"]},
+        )
+        self.assertEqual(reviewed.status_code, 201, reviewed.text)
+        updated = await self.client.patch(
+            f"/tickets/{ticket_id}/status", json={"status": "Processing"}
+        )
+        self.assertEqual(updated.status_code, 200, updated.text)
+        detail = await self.client.get(f"/tickets/{ticket_id}")
+        self.assertEqual(detail.json()["draft_status"], "reviewed")
+        self.assertEqual(detail.json()["status"], "Processing")
+
     async def test_attachment_is_persisted_and_downloadable(self) -> None:
         ticket = await self.create_ticket(
             files=[("attachments", ("proof.txt", b"evidence", "text/plain"))]
@@ -154,14 +260,52 @@ class TicketApiTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(response.content, b"evidence")
         self.assertEqual(response.headers["x-content-type-options"], "nosniff")
 
+    async def test_attachment_upload_enforces_type_and_size_limits(self) -> None:
+        unsupported = await self.client.post(
+            "/tickets",
+            data={"player_id": "player-1", "message": "File test"},
+            files=[("attachments", ("script.svg", b"<svg></svg>", "image/svg+xml"))],
+        )
+        mismatched = await self.client.post(
+            "/tickets",
+            data={"player_id": "player-1", "message": "File test"},
+            files=[("attachments", ("fake.png", b"not a PNG", "image/png"))],
+        )
+        oversized = await self.client.post(
+            "/tickets",
+            data={"player_id": "player-1", "message": "File test"},
+            files=[
+                (
+                    "attachments",
+                    ("large.txt", b"x" * (10 * 1024 * 1024 + 1), "text/plain"),
+                )
+            ],
+        )
+
+        self.assertEqual(unsupported.status_code, 415)
+        self.assertEqual(unsupported.json()["error"]["code"], "unsupported_file_type")
+        self.assertEqual(mismatched.status_code, 415)
+        self.assertEqual(mismatched.json()["error"]["code"], "invalid_file_content")
+        self.assertEqual(oversized.status_code, 413)
+        self.assertEqual(oversized.json()["error"]["code"], "attachment_too_large")
+        self.assertEqual((await self.client.get("/tickets")).json(), [])
+
     async def test_validation_errors_use_api_error_shape(self) -> None:
         response = await self.client.post(
             "/tickets",
             data={"player_id": "", "message": ""},
         )
+        ticket = await self.create_ticket()
+        malformed_json = await self.client.post(
+            f"/tickets/{ticket['ticket_id']}/analysis",
+            content="{",
+            headers={"Content-Type": "application/json"},
+        )
 
         self.assertEqual(response.status_code, 422)
         self.assertEqual(response.json()["error"]["code"], "validation_error")
+        self.assertEqual(malformed_json.status_code, 422)
+        self.assertEqual(malformed_json.json()["error"]["code"], "validation_error")
 
     async def test_local_frontend_cors_preflight_is_allowed(self) -> None:
         response = await self.client.options(
@@ -235,8 +379,11 @@ class TicketApiTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_rules_catalog_starts_empty(self) -> None:
         response = await self.client.get("/rules")
+        invalid_limit = await self.client.get("/rules?limit=0")
+
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), {"items": [], "count": 0})
+        self.assertEqual(invalid_limit.status_code, 422)
 
 
 if __name__ == "__main__":

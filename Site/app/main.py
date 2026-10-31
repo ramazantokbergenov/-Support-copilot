@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import uuid
 from datetime import UTC, datetime
 from urllib.parse import quote
@@ -31,6 +32,31 @@ from app.models import (
 MAX_ATTACHMENT_BYTES = 10 * 1024 * 1024
 MAX_TOTAL_ATTACHMENT_BYTES = 25 * 1024 * 1024
 MAX_ATTACHMENTS = 5
+ALLOWED_ATTACHMENT_TYPES = {
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "application/pdf",
+    "text/plain",
+}
+
+
+def attachment_content_matches(content_type: str, content: bytes) -> bool:
+    if content_type == "image/jpeg":
+        return content.startswith(b"\xff\xd8\xff")
+    if content_type == "image/png":
+        return content.startswith(b"\x89PNG\r\n\x1a\n")
+    if content_type == "image/webp":
+        return content.startswith(b"RIFF") and content[8:12] == b"WEBP"
+    if content_type == "application/pdf":
+        return content.startswith(b"%PDF-")
+    if content_type == "text/plain":
+        try:
+            content.decode("utf-8")
+            return b"\x00" not in content
+        except UnicodeDecodeError:
+            return False
+    return False
 
 
 def create_app(repository: TicketRepository | None = None) -> FastAPI:
@@ -108,6 +134,16 @@ def create_app(repository: TicketRepository | None = None) -> FastAPI:
 
     @application.get("/health")
     def health() -> dict[str, str]:
+        try:
+            get_repository().health_check()
+        except sqlite3.Error as exc:
+            raise HTTPException(
+                status_code=503,
+                detail={
+                    "code": "database_unavailable",
+                    "message": "The database is not available",
+                },
+            ) from exc
         return {"status": "ok"}
 
     @application.post(
@@ -157,6 +193,23 @@ def create_app(repository: TicketRepository | None = None) -> FastAPI:
                         ),
                     },
                 )
+            content_type = (upload.content_type or "application/octet-stream").split(";", 1)[0].strip().lower()
+            if content_type not in ALLOWED_ATTACHMENT_TYPES:
+                raise HTTPException(
+                    status_code=415,
+                    detail={
+                        "code": "unsupported_file_type",
+                        "message": "This attachment type is not allowed",
+                    },
+                )
+            if not attachment_content_matches(content_type, content):
+                raise HTTPException(
+                    status_code=415,
+                    detail={
+                        "code": "invalid_file_content",
+                        "message": "The attachment content does not match its declared type",
+                    },
+                )
             total_size += len(content)
             if total_size > MAX_TOTAL_ATTACHMENT_BYTES:
                 raise HTTPException(
@@ -173,7 +226,7 @@ def create_app(repository: TicketRepository | None = None) -> FastAPI:
                 {
                     "attachment_id": str(uuid.uuid4()),
                     "filename": upload.filename or "attachment",
-                    "content_type": upload.content_type or "application/octet-stream",
+                    "content_type": content_type,
                     "size_bytes": len(content),
                     "content": content,
                 }

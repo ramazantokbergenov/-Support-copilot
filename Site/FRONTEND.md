@@ -8,7 +8,7 @@ Local FastAPI:
 
 ```sh
 cp frontend.env.example .env.local
-npm install
+npm ci
 npm run dev
 ```
 
