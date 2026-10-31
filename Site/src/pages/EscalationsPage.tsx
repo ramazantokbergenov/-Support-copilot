@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useWorkspace } from "../context/WorkspaceContext";
 import { formatDate, isEscalated } from "../lib/format";
-import { getTicket } from "../lib/localWorkspace";
+import { getTicket } from "../lib/api";
 import {
   ErrorState,
   LoadingState,
@@ -70,13 +70,12 @@ export function EscalationsPage() {
       <PageHeading
         eyebrow="ЧЕЛОВЕЧЕСКАЯ ПРОВЕРКА"
         title="Escalations"
-        description="Обращения, которым оператор вручную установил статус эскалации."
+        description="Обращения, которым оператор или AI-анализ назначил обязательную проверку человеком."
       />
       <div className="notice-banner warning-banner">
         <AlertTriangle size={16} />
         <span>
-          AI-рекомендации отключены офлайн. Эскалируйте обращение вручную, если
-          оно требует проверки.
+          Причины проверки и текущий статус загружаются из Backend. Итоговое решение всегда принимает оператор.
         </span>
       </div>
       {loading && tickets.length === 0 ? (
@@ -126,7 +125,7 @@ export function EscalationsPage() {
                           : "Загружаем причину эскалации…")}
                   </p>
                   <small>
-                    Дополнительная информация находится в локальной карточке
+                    Дополнительная информация находится в карточке
                     обращения.
                   </small>
                 </div>
@@ -149,7 +148,7 @@ export function EscalationsPage() {
             </strong>
             <span>
               {tickets.length
-                ? "Ни одно локальное обращение не отмечено для эскалации."
+                ? "Ни одно обращение Backend не отмечено для проверки."
                 : "Создайте обращение и вручную измените его статус, если нужна проверка."}
             </span>
           </div>

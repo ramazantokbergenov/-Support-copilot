@@ -1,6 +1,7 @@
 import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "./components/AppShell";
 import { WorkspaceProvider } from "./context/WorkspaceContext";
+import { AuthGate, AuthProvider } from "./context/AuthContext";
 import { AnalysisDetailPage } from "./pages/AnalysisDetailPage";
 import { AnalysisPage } from "./pages/AnalysisPage";
 import { AnalyticsPage } from "./pages/AnalyticsPage";
@@ -28,9 +29,11 @@ function NotFound() {
 export default function App() {
   return (
     <BrowserRouter>
-      <WorkspaceProvider>
-        <Routes>
-          <Route element={<AppShell />}>
+      <AuthProvider>
+        <AuthGate>
+          <WorkspaceProvider>
+            <Routes>
+              <Route element={<AppShell />}>
             <Route index element={<OverviewPage />} />
             <Route path="tickets" element={<TicketsPage />} />
             <Route path="tickets/:ticketId" element={<TicketDetailPage />} />
@@ -45,9 +48,11 @@ export default function App() {
             <Route path="settings" element={<SettingsPage />} />
             <Route path="not-found" element={<NotFound />} />
             <Route path="*" element={<Navigate replace to="/not-found" />} />
-          </Route>
-        </Routes>
-      </WorkspaceProvider>
+              </Route>
+            </Routes>
+          </WorkspaceProvider>
+        </AuthGate>
+      </AuthProvider>
     </BrowserRouter>
   );
 }

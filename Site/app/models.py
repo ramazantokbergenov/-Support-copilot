@@ -61,8 +61,39 @@ class TicketDetail(TicketSummary):
     extracted_facts: list[str] | None
     matched_rules: list[RuleRecord]
     draft_reply: str | None
+    draft_id: str | None = None
+    draft_version: int | None = None
+    draft_status: str | None = None
     escalation_reason: str | None
     ai_analysis: dict[str, Any] | None = None
+    operator_notes: list["OperatorNote"] = Field(default_factory=list)
+
+
+class OperatorNote(BaseModel):
+    id: str
+    operator_id: str
+    body: str
+    created_at: datetime
+
+
+class DraftBody(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    body: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=20000)]
+
+
+class DecisionSubmission(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    decision: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=40)]
+    draft_id: str | None = None
+    note: str | None = Field(default=None, max_length=2000)
+
+
+class OperatorNoteSubmission(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    body: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1, max_length=5000)]
 
 
 class AnalysisSubmission(BaseModel):

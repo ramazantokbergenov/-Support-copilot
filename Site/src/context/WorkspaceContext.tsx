@@ -4,14 +4,16 @@ import {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type ReactNode,
 } from "react";
-import { listTickets } from "../lib/localWorkspace";
+import { listTickets } from "../lib/api";
 import type { TicketSummary } from "../types";
 
 interface WorkspaceValue {
   tickets: TicketSummary[];
+  totalCount: number;
   loading: boolean;
   error: string | null;
   refresh: () => Promise<void>;
@@ -21,20 +23,30 @@ const WorkspaceContext = createContext<WorkspaceValue | null>(null);
 
 export function WorkspaceProvider({ children }: { children: ReactNode }) {
   const [tickets, setTickets] = useState<TicketSummary[]>([]);
+  const [totalCount, setTotalCount] = useState(0);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const refresh = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      setTickets(await listTickets());
-    } catch (reason) {
-      setError(
-        reason instanceof Error ? reason.message : "Не удалось загрузить обращения.",
-      );
-    } finally {
-      setLoading(false);
-    }
+  const refreshInFlight = useRef<Promise<void> | null>(null);
+  const refresh = useCallback(() => {
+    if (refreshInFlight.current) return refreshInFlight.current;
+    const request = (async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        const response = await listTickets({ limit: 100 });
+        setTickets(response.items);
+        setTotalCount(response.count);
+      } catch (reason) {
+        setError(
+          reason instanceof Error ? reason.message : "Не удалось загрузить обращения.",
+        );
+      } finally {
+        setLoading(false);
+        refreshInFlight.current = null;
+      }
+    })();
+    refreshInFlight.current = request;
+    return request;
   }, []);
 
   useEffect(() => {
@@ -42,8 +54,8 @@ export function WorkspaceProvider({ children }: { children: ReactNode }) {
   }, [refresh]);
 
   const value = useMemo(
-    () => ({ tickets, loading, error, refresh }),
-    [tickets, loading, error, refresh],
+    () => ({ tickets, totalCount, loading, error, refresh }),
+    [tickets, totalCount, loading, error, refresh],
   );
 
   return (

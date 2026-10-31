@@ -16,10 +16,18 @@ import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 import { ErrorState, LoadingState, PriorityBadge, StatusBadge } from "../components/UI";
 import { useWorkspace } from "../context/WorkspaceContext";
-import { attachmentUrl, getAttachment, getTicket, updateTicketStatus } from "../lib/localWorkspace";
+import {
+  analyzeTicket,
+  attachmentUrl,
+  getAttachment,
+  getTicket,
+  getTicketEvents,
+  saveOperatorNote,
+  updateTicketStatus,
+} from "../lib/api";
 import { formatBytes, formatDate } from "../lib/format";
 import { useToast } from "../components/AppShell";
-import type { AiAnalysis, TicketAttachment, TicketDetail, TicketStatus } from "../types";
+import type { AiAnalysis, OperatorEvent, TicketAttachment, TicketDetail, TicketStatus } from "../types";
 
 const statuses: TicketStatus[] = ["New", "Processing", "Needs Review", "Approved", "Escalated", "Closed"];
 
@@ -31,27 +39,34 @@ function FactList({ items, empty }: { items: string[]; empty: string }) {
 
 function AnalysisPanel({
   ticket,
+  analyzing,
+  onAnalyze,
 }: {
   ticket: TicketDetail;
+  analyzing: boolean;
+  onAnalyze: () => void;
 }) {
   const result = ticket.ai_analysis;
+  const humanReviewRequired = result?.human_review_required ?? result?.escalation_required ?? ticket.escalation_required;
   return (
     <aside className="panel detail-panel detail-analysis">
       <div className="panel-header">
         <div className="panel-title"><Sparkles size={16} /><span>AI Analysis</span></div>
-        <span className="ai-chip">OFFLINE</span>
-      </div>
-      {!result ? (
-        <div className="analysis-empty">
-          <div className="empty-icon"><Sparkles size={18} /></div>
-          <strong>AI-анализ отключён</strong>
-          <p>Без backend анализ не запускается. Подключите его, чтобы получить результат; демонстрационные выводы не создаются.</p>
-          <button className="button button-secondary button-wide" disabled type="button">
-            <Play size={14} /> Недоступно офлайн
+        <div className="heading-actions">
+          {humanReviewRequired && <span className="badge status-escalated">Требуется проверка</span>}
+          <button className="button button-secondary" disabled={analyzing} onClick={onAnalyze} type="button">
+            <Play size={13} /> {analyzing ? "Анализируем..." : result ? "Повторить анализ" : "Анализировать"}
           </button>
         </div>
-      ) : (
+      </div>
+      {result ? (
         <AnalysisContent result={result} ticket={ticket} />
+      ) : (
+        <div className="analysis-empty">
+          <div className="empty-icon"><Sparkles size={18} /></div>
+          <strong>Анализ ещё не запускался</strong>
+          <p>Запустите проверку, чтобы получить классификацию, вопросы и подтверждённые источники правил.</p>
+        </div>
       )}
     </aside>
   );
@@ -70,6 +85,8 @@ function AnalysisContent({ result, ticket }: { result: AiAnalysis; ticket: Ticke
         <span className="micro-label">КЛАССИФИКАЦИЯ</span>
         <div className="classification">{result.category}</div>
         <p>{result.category_reason}</p>
+        <p>Язык: {result.language || "Не определён"} · Приоритет: {result.priority || ticket.priority}</p>
+        {result.summary && <p>{result.summary}</p>}
       </div>
       <div className="analysis-section">
         <span className="micro-label">УТВЕРЖДЕНИЯ ИГРОКА</span>
@@ -79,6 +96,12 @@ function AnalysisContent({ result, ticket }: { result: AiAnalysis; ticket: Ticke
         <span className="micro-label">НЕИЗВЕСТНЫЕ ФАКТЫ</span>
         <FactList empty="Неизвестные сведения не указаны." items={result.unknowns ?? []} />
       </div>
+      {result.missing_information_questions?.length ? (
+        <div className="analysis-section">
+          <span className="micro-label">НУЖНЫ УТОЧНЕНИЯ</span>
+          <FactList empty="Уточнения не требуются." items={result.missing_information_questions} />
+        </div>
+      ) : null}
       <div className="analysis-section">
         <span className="micro-label">ДАННЫЕ ИЗ ВЛОЖЕНИЙ</span>
         {result.attachments?.length ? result.attachments.map((file) => (
@@ -94,15 +117,17 @@ function AnalysisContent({ result, ticket }: { result: AiAnalysis; ticket: Ticke
       </div>
       <div className="analysis-section">
         <span className="micro-label">ПРАВИЛА GRAND MOBILE</span>
-        {rules.length ? rules.map((rule) => (
+          {rules.length ? rules.map((rule) => (
           <a className="matched-rule" href={rule.source_url} key={`${rule.document_name}-${rule.rule_id}`} rel="noreferrer" target="_blank">
-            <span><strong>{rule.rule_id}</strong><small>{rule.document_name} · {rule.rule_title}</small></span><ArrowUpRight size={14} />
+              <span><strong>{rule.rule_id}</strong><small>{rule.document_name} · {rule.rule_title}</small><small>{rule.rule_text}</small><small>{rule.version_or_date || "Версия не указана"}</small></span><ArrowUpRight size={14} />
           </a>
         )) : <p className="muted small-copy">Совпадений в загруженной базе нет.</p>}
       </div>
-      {result.escalation_required && (
+      {(result.human_review_required ?? result.escalation_required) && (
         <div className="escalation-warning">
-          <AlertTriangle size={15} /><div><strong>Рекомендуется эскалация</strong><p>{result.escalation_reason || "Причина не указана."}</p></div>
+          <AlertTriangle size={15} /><div><strong>Требуется проверка оператором</strong>
+            <FactList empty={result.escalation_reason || "Причина не указана."} items={result.escalation_reasons?.length ? result.escalation_reasons : result.escalation_reason ? [result.escalation_reason] : []} />
+          </div>
         </div>
       )}
     </div>
@@ -117,7 +142,11 @@ export function TicketDetailPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [savingStatus, setSavingStatus] = useState(false);
+  const [analyzing, setAnalyzing] = useState(false);
+  const [savingNote, setSavingNote] = useState(false);
   const [note, setNote] = useState("");
+  const [events, setEvents] = useState<OperatorEvent[]>([]);
+  const [eventError, setEventError] = useState<string | null>(null);
   const [previewAttachment, setPreviewAttachment] = useState<TicketAttachment | null>(null);
 
   useEffect(() => {
@@ -125,7 +154,10 @@ export function TicketDetailPage() {
     setLoading(true);
     setError(null);
     getTicket(ticketId, controller.signal)
-      .then(setTicket)
+      .then((value) => {
+        setTicket(value);
+        setNote(value.operator_notes?.[0]?.body ?? "");
+      })
       .catch((reason: unknown) => {
         if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Не удалось загрузить обращение.");
       })
@@ -134,12 +166,30 @@ export function TicketDetailPage() {
   }, [ticketId]);
 
   useEffect(() => {
-    try {
-      setNote(window.localStorage.getItem(`sc-note:${ticketId}`) ?? "");
-    } catch {
-      setNote("");
-    }
+    const controller = new AbortController();
+    setEventError(null);
+    getTicketEvents(ticketId, controller.signal)
+      .then(setEvents)
+      .catch((reason: unknown) => {
+        if (!controller.signal.aborted) setEventError(reason instanceof Error ? reason.message : "Не удалось загрузить историю действий.");
+      });
+    return () => controller.abort();
   }, [ticketId]);
+
+  async function runAnalysis() {
+    if (!ticket || analyzing) return;
+    setAnalyzing(true);
+    try {
+      await analyzeTicket(ticket.ticket_id);
+      setTicket(await getTicket(ticket.ticket_id));
+      await refresh();
+      notify("AI-анализ завершён. Проверьте результат перед решением.");
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : "Не удалось выполнить AI-анализ.", "error");
+    } finally {
+      setAnalyzing(false);
+    }
+  }
 
   async function changeStatus(status: TicketStatus) {
     if (!ticket) return;
@@ -156,12 +206,17 @@ export function TicketDetailPage() {
     }
   }
 
-  function saveNote() {
+  async function saveNote() {
+    if (!ticket || !note.trim() || savingNote) return;
+    setSavingNote(true);
     try {
-      window.localStorage.setItem(`sc-note:${ticketId}`, note);
-      notify("Заметка сохранена только в этом браузере.");
-    } catch {
-      notify("Не удалось сохранить заметку в локальном хранилище.", "error");
+      const saved = await saveOperatorNote(ticket.ticket_id, note.trim());
+      setTicket({ ...ticket, operator_notes: [saved, ...(ticket.operator_notes ?? [])] });
+      notify("Внутренняя заметка сохранена.");
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : "Не удалось сохранить заметку.", "error");
+    } finally {
+      setSavingNote(false);
     }
   }
 
@@ -207,7 +262,12 @@ export function TicketDetailPage() {
               <span className="timeline-point" />
               <div><strong>Обращение создано</strong><small>{formatDate(ticket.created_at)}</small></div>
             </div>
-            <p className="integration-note">Журнал последующих изменений пока не предоставляется API.</p>
+            {eventError ? <p className="integration-note">{eventError}</p> : events.slice(0, 5).map((event) => (
+              <div className="timeline" key={event.id}>
+                <span className="timeline-point" />
+                <div><strong>{event.action}</strong><small>{formatDate(event.created_at)}</small></div>
+              </div>
+            ))}
           </div>
           {ticket.escalation_required && (
             <div className="risk-card"><AlertTriangle size={15} /><div><strong>Нужна проверка</strong><span>{ticket.escalation_reason || "Причина не указана."}</span></div></div>
@@ -237,13 +297,13 @@ export function TicketDetailPage() {
             )}
           </div>
           <div className="note-composer">
-            <div className="composer-heading"><span><ShieldCheck size={14} /> Внутренняя заметка</span><span>Только в этом браузере</span></div>
+            <div className="composer-heading"><span><ShieldCheck size={14} /> Внутренняя заметка</span><span>Видна операторам</span></div>
             <textarea aria-label="Внутренняя заметка" onChange={(event) => setNote(event.target.value)} placeholder="Добавьте заметку для себя..." rows={3} value={note} />
-            <div className="composer-actions"><span>Не отправляется игроку</span><button className="button button-secondary" onClick={saveNote} type="button"><Check size={14} /> Сохранить заметку</button></div>
+            <div className="composer-actions"><span>Не отправляется игроку</span><button className="button button-secondary" disabled={savingNote || !note.trim()} onClick={() => void saveNote()} type="button"><Check size={14} /> {savingNote ? "Сохраняем..." : "Сохранить заметку"}</button></div>
           </div>
         </section>
 
-        <AnalysisPanel ticket={ticket} />
+        <AnalysisPanel analyzing={analyzing} onAnalyze={() => void runAnalysis()} ticket={ticket} />
       </div>
       {previewAttachment && (
         <AttachmentPreview
@@ -268,6 +328,7 @@ function AttachmentPreview({
   const [preview, setPreview] = useState<{ kind: "image" | "pdf"; url: string } | { kind: "text"; text: string } | { kind: "unsupported" } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [downloadUrl, setDownloadUrl] = useState<string | null>(null);
   const url = attachmentUrl(ticketId, attachment.attachment_id);
 
   useEffect(() => {
@@ -276,12 +337,13 @@ function AttachmentPreview({
     setLoading(true);
     setError(null);
     setPreview(null);
+    setDownloadUrl(null);
     getAttachment(url, controller.signal).then(async (blob) => {
+      objectUrl = URL.createObjectURL(blob);
+      setDownloadUrl(objectUrl);
       if (attachment.content_type.startsWith("image/")) {
-        objectUrl = URL.createObjectURL(blob);
         setPreview({ kind: "image", url: objectUrl });
       } else if (attachment.content_type === "application/pdf") {
-        objectUrl = URL.createObjectURL(blob);
         setPreview({ kind: "pdf", url: objectUrl });
       } else if (attachment.content_type.startsWith("text/") || attachment.content_type === "application/json") {
         setPreview({ kind: "text", text: await blob.text() });
@@ -314,7 +376,7 @@ function AttachmentPreview({
       <section aria-label={`Предпросмотр файла ${attachment.filename}`} aria-modal="true" className="preview-dialog" role="dialog">
         <div className="dialog-header">
           <div className="preview-title"><span className="attachment-icon"><FileText size={16} /></span><span><strong>{attachment.filename}</strong><small>{formatBytes(attachment.size_bytes)} · {attachment.content_type}</small></span></div>
-          <div className="preview-actions"><a className="button button-secondary" download={attachment.filename} href={url}><Download size={14} /> Скачать</a><button aria-label="Закрыть предпросмотр" className="icon-button" onClick={onClose} type="button"><X size={17} /></button></div>
+          <div className="preview-actions"><a aria-disabled={!downloadUrl} className="button button-secondary" download={attachment.filename} href={downloadUrl ?? undefined}><Download size={14} /> Скачать</a><button aria-label="Закрыть предпросмотр" className="icon-button" onClick={onClose} type="button"><X size={17} /></button></div>
         </div>
         <div className="preview-body">
           {loading ? <LoadingState label="Загружаем вложение" /> : error ? <ErrorState message={error} /> : preview?.kind === "image" ? <img alt={attachment.filename} className="preview-image" src={preview.url} /> : preview?.kind === "pdf" ? <iframe className="preview-pdf" src={preview.url} title={`Предпросмотр ${attachment.filename}`} /> : preview?.kind === "text" ? <pre className="preview-text">{preview.text}</pre> : <div className="preview-unsupported"><FileText size={22} /><strong>Предпросмотр этого формата недоступен</strong><span>Скачайте файл, чтобы открыть его в подходящем приложении.</span></div>}

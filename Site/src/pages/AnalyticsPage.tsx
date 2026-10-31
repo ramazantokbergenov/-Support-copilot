@@ -93,7 +93,7 @@ export function AnalyticsPage() {
 
   return (
     <>
-      <PageHeading eyebrow="ОПЕРАЦИОННЫЕ ДАННЫЕ" title="Analytics" description="Показатели рассчитаны по обращениям, сохранённым в этом браузере." actions={<label className="period-control"><span>Период</span><select onChange={(event) => setPeriod(event.target.value as Period)} value={period}><option value="7">Последние 7 дней</option><option value="30">Последние 30 дней</option><option value="90">Последние 90 дней</option><option value="all">За всё время</option></select></label>} />
+      <PageHeading eyebrow="ОПЕРАЦИОННЫЕ ДАННЫЕ" title="Analytics" description="Показатели рассчитаны по обращениям, загруженным из Backend (до 100 записей)." actions={<label className="period-control"><span>Период</span><select onChange={(event) => setPeriod(event.target.value as Period)} value={period}><option value="7">Последние 7 дней</option><option value="30">Последние 30 дней</option><option value="90">Последние 90 дней</option><option value="all">За всё время</option></select></label>} />
       {loading ? <section className="panel analytics-empty"><LoadingState label="Загружаем данные аналитики" /></section> : error ? (
         <ErrorState message={error} onRetry={() => void refresh()} />
       ) : tickets.length === 0 ? (
@@ -104,7 +104,7 @@ export function AnalyticsPage() {
             <MetricCard accent detail={periodLabel(period)} icon={Inbox} label="Обращения" value={range.length} />
             <MetricCard detail="Созданы в выбранном периоде" icon={AlertTriangle} label="Эскалации" value={escalated} />
             <MetricCard detail="Текущая очередь" icon={BarChart3} label="В работе" value={statusCounts.get("Processing") ?? 0} />
-            <MetricCard detail="Текущий локальный статус" icon={ShieldAlert} label="На проверке" value={statusCounts.get("Needs Review") ?? 0} />
+            <MetricCard detail="Текущий статус загруженных обращений" icon={ShieldAlert} label="На проверке" value={statusCounts.get("Needs Review") ?? 0} />
           </section>
           <div className="analytics-grid">
             <section className="panel chart-panel">

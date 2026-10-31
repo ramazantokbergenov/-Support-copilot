@@ -1,7 +1,7 @@
 import { BookOpen, ExternalLink, FileText, Search } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { EmptyState, ErrorState, LoadingState, PageHeading } from "../components/UI";
-import { getRules } from "../lib/localWorkspace";
+import { getRules } from "../lib/api";
 import type { RuleRecord } from "../types";
 
 export function KnowledgePage() {
@@ -35,14 +35,14 @@ export function KnowledgePage() {
 
   return (
     <>
-      <PageHeading eyebrow="ПРОВЕРЕННЫЕ ИСТОЧНИКИ" title="Knowledge Base" description="Правила и документы, загруженные в локальную базу проекта." />
+      <PageHeading eyebrow="ПРОВЕРЕННЫЕ ИСТОЧНИКИ" title="Knowledge Base" description="Поиск по активным, версионированным источникам правил Backend." />
       <section className="panel knowledge-panel">
         <div className="knowledge-toolbar">
           <label className="filter-search"><Search size={16} /><input onChange={(event) => { setQuery(event.target.value); setActiveDocument(null); }} placeholder="Поиск по названию, пункту или тексту правила" value={query} /></label>
           <span className="source-count"><BookOpen size={15} /> {rules.length} {rules.length === 1 ? "пункт" : "пунктов"}</span>
         </div>
         {error ? <ErrorState message={error} /> : loading ? <LoadingState label="Ищем в базе знаний" /> : rules.length === 0 ? (
-          <EmptyState icon="book" title={query ? "Совпадений нет" : "База знаний недоступна офлайн"} description={query ? "Попробуйте изменить поисковый запрос." : "Загрузка проверенных правил требует backend. Вымышленные материалы не показываются."} />
+          <EmptyState icon="book" title={query ? "Совпадений нет" : "В базе нет активных правил"} description={query ? "Попробуйте изменить поисковый запрос." : "Показываются только опубликованные правила с проверенным источником."} />
         ) : (
           <div className="knowledge-layout">
             <div className="document-list">

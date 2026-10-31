@@ -19,8 +19,8 @@ export function AnalysisPage() {
 
   return (
     <>
-      <PageHeading eyebrow="ПРОВЕРКА РЕЗУЛЬТАТОВ" title="AI Analysis" description="Обзор обращений. Подробный результат AI появится после подключения backend." />
-      <div className="notice-banner warning-banner"><Sparkles size={16} /><span><strong>Автономный режим.</strong> AI-анализ отключён; система не создаёт фиктивные классификации и рекомендации.</span></div>
+      <PageHeading eyebrow="ПРОВЕРКА РЕЗУЛЬТАТОВ" title="AI Analysis" description="Обращения и сохранённые результаты анализа из Backend." />
+      <div className="notice-banner"><Sparkles size={16} /><span>Откройте обращение и запустите анализ. Результаты и rule references требуют проверки оператором.</span></div>
       {loading && tickets.length === 0 ? <section className="panel"><LoadingState label="Загружаем очередь анализа" /></section> : error && tickets.length === 0 ? <ErrorState message={error} onRetry={() => void refresh()} /> : null}
       <section className="panel list-panel">
         <div className="list-panel-toolbar">
@@ -39,7 +39,7 @@ export function AnalysisPage() {
             ))}
           </div>
         ) : (
-          <div className="table-empty"><div className="empty-icon"><Sparkles size={18} /></div><strong>{tickets.length ? "Обращений не найдено" : "Нет обращений для анализа"}</strong><span>{tickets.length ? "Измените поисковый запрос." : "Создайте обращение; открыть этот раздел с результатами AI можно после подключения backend."}</span></div>
+          <div className="table-empty"><div className="empty-icon"><Sparkles size={18} /></div><strong>{tickets.length ? "Обращений не найдено" : "Нет обращений для анализа"}</strong><span>{tickets.length ? "Измените поисковый запрос." : "Создайте обращение в Backend, затем запустите анализ из карточки."}</span></div>
         )}
       </section>
     </>

@@ -1,27 +1,37 @@
 # Frontend Support Copilot
 
-React + TypeScript frontend находится в `src/` и использует React Router и Lucide.
-Для запуска требуются Node.js 20.19+ и npm:
+React + TypeScript frontend находится в `src/` и использует React Router, Lucide и Supabase Auth. Компоненты, раскладка и CSS сохраняют исходный интерфейс; ticket data, статусы, analysis, rules, notes и drafts загружаются из Backend, а не из browser storage.
+
+Для запуска требуются Node.js 20.19+ и npm. Сначала выберите один backend режим и скопируйте `frontend.env.example` в `.env.local`.
+
+Local FastAPI:
 
 ```sh
+cp frontend.env.example .env.local
 npm install
 npm run dev
 ```
 
-По умолчанию frontend работает автономно и не отправляет запросы к backend.
-Созданные обращения, статусы и черновики сохраняются только в localStorage
-текущего браузера. Это временный локальный режим; данные не синхронизируются
-между устройствами. Вложения, AI-анализ и база правил требуют backend и
-помечены в интерфейсе как недоступные.
+Задайте `VITE_API_BASE_URL=http://127.0.0.1:8000` и запустите FastAPI отдельно из `Site/`. Локальный API не имеет Auth и предназначен для localhost.
 
-Проверка типов и production-сборка:
+Supabase Edge:
+
+```env
+VITE_SUPABASE_URL=https://<project-ref>.supabase.co
+VITE_SUPABASE_ANON_KEY=<public-anon-key>
+```
+
+Удалите или оставьте пустым `VITE_API_BASE_URL`: клиент автоматически использует `/functions/v1/api` и требует operator login. В frontend допускается только публичный anon key. Никогда не задавайте `SUPABASE_SERVICE_ROLE_KEY` или `LLM_API_KEY` в `VITE_*` переменных.
+
+Проверки:
 
 ```sh
 npm run typecheck
 npm run build
+npx playwright install chromium
+npm run test:e2e
 ```
 
-Production-сборка не требует backend. Backend можно подключить позднее,
-заменив локальный адаптер данных. Назначение операторов, журнал действий,
-роли пользователей и отправка ответов игрокам также требуют отдельной
-интеграции.
+E2E тесты используют установленный Chromium и запущенные Vite/FastAPI на портах `5173`/`8000`. В Linux может потребоваться установка системных библиотек Chromium командой `npx playwright install-deps chromium` из окружения с разрешённым управлением пакетами.
+
+UI поиска/аналитики вне списка обращений агрегирует последние 100 записей; точный общий count очереди приходит от Backend. Отдельный endpoint управления командой/назначениями не реализован. Автоматической отправки ответа игроку нет.

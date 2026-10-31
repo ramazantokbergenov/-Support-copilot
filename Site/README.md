@@ -1,18 +1,20 @@
 # ZHS Support Copilot backend
 
-Локальный backend для регистрации обращений, хранения вложений и передачи результата AI-анализа. Интеграции с Grand Mobile, AI-провайдером и отправки ответов игрокам здесь нет.
+Локальный FastAPI backend поддерживает структурированный AI-анализ, а Supabase foundation предоставляет защищённый Edge API и pgvector retrieval. Ни один режим не отправляет ответы игрокам автоматически и не подключён к игровым логам Grand Mobile.
+
+Подробные инструкции по AI provider, Supabase, strict analysis schema и импорту официальных правил: [AI_RAG.md](AI_RAG.md).
 
 ## Требования и запуск
 
 - Python 3.11+
 
-В PowerShell из папки проекта:
+Из папки `Site/` в Linux/macOS shell:
 
-```powershell
-py -m venv .venv
-.\.venv\Scripts\Activate.ps1
-py -m pip install -r requirements.txt
-py -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install -r requirements.txt
+python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
 По умолчанию SQLite-файл `support_copilot.db` создаётся в текущей папке. Для другого расположения задайте переменную `SUPPORT_COPILOT_DB` до запуска. Сервер привязан к localhost; перед сетевым или production-развёртыванием необходимы аутентификация, авторизация и защищённое хранилище.
@@ -23,9 +25,9 @@ py -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 Проверка тестов:
 
-```powershell
-py -m pip install -r requirements-test.txt
-py -m unittest discover -s tests -v
+```sh
+python -m pip install -r requirements-test.txt
+python -m unittest discover -s tests -v
 ```
 
 ## API contract
@@ -76,7 +78,9 @@ py -m unittest discover -s tests -v
 
 ### Локальный модуль предварительного анализа
 
-`POST /tickets/{ticket_id}/analyze` запускает локальный детерминированный анализ сохранённого обращения, проверяет результат через Pydantic-схему и сохраняет совместимые поля через тот же репозиторий. Ответ включает `category_reason`, `language`, `summary`, `player_claims`, `attachments`, `verified_system_data`, `unknowns`, `matched_rules`, `draft_reply`, `confidence`, `escalation_required` и `escalation_reason`. Вложение описывается только метаданными, `inspected` всегда `false`; внутренние логи не доступны. Статус обращения не меняется, ответ игроку не отправляется.
+`POST /tickets/{ticket_id}/analyze-structured` возвращает и сохраняет строгую structured schema; legacy `/analyze` продолжает отдавать UI-compatible формат.
+
+Локальный `POST /tickets/{ticket_id}/analyze` проверяет structured Pydantic result и возвращает прежний UI-compatible формат. `POST /tickets/{ticket_id}/analyze-structured` возвращает и сохраняет строго типизированную схему Task 3; детали обращения по-прежнему получают legacy-compatible `ai_analysis`. В обоих случаях содержимое вложений не считается просмотренным, внутренние игровые логи недоступны, статус автоматически не меняется.
 
 Пример локального запуска анализа:
 
@@ -86,14 +90,14 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/tickets/<ticket_id>/a
 
 Результат хранится в поле `ai_analysis` при чтении `GET /tickets/{ticket_id}`. Краткие факты также сохраняются с префиксами `PLAYER_CLAIMS`, `ATTACHMENTS`, `VERIFIED_SYSTEM_DATA` и `UNKNOWN` для совместимости с текущей моделью Backend.
 
-Модуль не вызывает внешнюю языковую модель: классификация основана на объяснимых словарных признаках, поиск правил — на лексическом пересечении слов с точным текстом из таблицы `rules`, уверенность является эвристической, а не вероятностью. Если правило не найдено, обращение эскалируется, а черновик сообщает об отсутствии совпадения. Не загружайте фиктивные правила: база должна содержать только проверенные документы.
+Локальный `AnalysisProvider` может вызывать настроенный OpenAI-compatible provider; без credentials выполняется осторожный deterministic fallback. Локальный поиск правил остаётся лексическим по SQLite и не является pgvector. Supabase Edge Function использует embeddings/pgvector; качество реального LLM и hosted RAG не подтверждено локальными unit tests. Если нет версионированного HTTPS-источника, citation не возвращается и требуется operator review.
 
 ### База правил
 
 - `GET /rules?query=...&language=...&limit=50` — поиск по ID, заголовку и тексту.
 - SQLite-таблица `rules` хранит `document_name`, `rule_id`, `rule_title`, `rule_text`, `source_url`, `language`, `version_or_date`. Ключ правила составной: `(document_name, rule_id)`.
 
-База правил создаётся пустой. Механизм импорта и публичный endpoint для добавления правил в MVP не реализованы; перед запуском AI-модуля нужно отдельно загрузить материалы, предварительно подтверждённые владельцем проекта. Поэтому AI не может сохранить ссылку на правило, которого нет в этой базе.
+SQLite база правил создаётся пустой и локальный импорт для неё не добавлен. Supabase ingestion CLI описан в [AI_RAG.md](AI_RAG.md): он принимает только source с allowlisted HTTPS host, версией и явными номерами правил. В репозитории нет проверенных материалов Grand Mobile, поэтому документы необходимо предоставить и подтвердить до индексации.
 
 ## Модель данных
 
@@ -101,11 +105,11 @@ Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/tickets/<ticket_id>/a
 
 Дата создания хранится в UTC ISO 8601. Анализ не меняет статус автоматически. `Approved` означает ручное изменение статуса, а не автоматическое принятие или отправку ответа.
 
-## Состав и ограничения MVP
+## Состав и ограничения
 
-- Модули: `app/main.py` (HTTP/API), `app/models.py` (Backend-контракт), `app/database.py` (SQLite и репозиторий), `app/ai_engine/` (схемы результата, классификация, извлечение и поиск правил).
-- Реализованы создание/чтение обращений, фильтры, статусы, вложения, хранение результата анализа, локальный baseline-анализ и поиск по загруженным правилам.
-- Не реализованы: внешняя языковая модель, OCR/просмотр файлов, семантический векторный поиск, импорт/администрирование проверенных правил, аутентификация/роли операторов, интеграция с Grand Mobile, аудит действий, production-хранилище вложений и автоматическое уведомление о передаче человеку.
+- AI-модули: `app/ai_engine/models.py` (strict schemas), `services.py` (language/classification/facts/rules/escalation/drafts), `providers.py` (provider protocol), `ingestion.py` и `scripts/ingest_official_rules.py` (RAG ingestion).
+- Supabase foundation включает PostgreSQL migrations, Auth profiles, RLS, private Storage, pgvector RPC и защищённую Edge Function. Локальная FastAPI/SQLite база остаётся отдельным режимом и не синхронизируется с Supabase.
+- OCR/видео, интеграция с игровыми логами/Grand Mobile и автоматическая отправка ответов не реализованы. Официальные правила в проект не включены, а hosted Supabase/Edge и реальный внешний provider требуют проверки на развернутом проекте.
 - Ответы игрокам автоматически не отправляются; внутренние игровые логи не запрашиваются.
 
 AI-модульные и API-тесты запускаются вместе с Backend-тестами командой `py -m unittest discover -s tests -v`.

@@ -1,16 +1,12 @@
-import { AlertTriangle, Check, Clipboard, FileText, Save } from "lucide-react";
+import { AlertTriangle, Check, Clipboard, FileText, RotateCw, Save } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import { Link } from "react-router-dom";
 import { useToast } from "../components/AppShell";
 import { ErrorState, LoadingState, PageHeading, StatusBadge } from "../components/UI";
 import { useWorkspace } from "../context/WorkspaceContext";
-import { getTicket } from "../lib/localWorkspace";
+import { getTicket, recordDecision, regenerateReply, saveDraft as persistDraft } from "../lib/api";
 import { formatDate } from "../lib/format";
 import type { TicketDetail } from "../types";
-
-function localKey(ticketId: string) {
-  return `sc-draft:${ticketId}`;
-}
 
 export function DraftsPage() {
   const { tickets, loading: ticketsLoading, error: ticketsError, refresh } = useWorkspace();
@@ -23,6 +19,7 @@ export function DraftsPage() {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [reviewed, setReviewed] = useState(false);
+  const [savingAction, setSavingAction] = useState<"save" | "generate" | "review" | null>(null);
 
   useEffect(() => {
     if (!selectedId && candidates[0]) setSelectedId(candidates[0].ticket_id);
@@ -42,17 +39,9 @@ export function DraftsPage() {
     setError(null);
     getTicket(selectedId, controller.signal).then((value) => {
       setTicket(value);
-      let localDraft = "";
-      let localReviewed = false;
-      try {
-        localDraft = window.localStorage.getItem(localKey(selectedId)) ?? "";
-        localReviewed = window.localStorage.getItem(`sc-reviewed:${selectedId}`) === "true";
-      } catch {
-        setError("Локальное хранилище недоступно; черновик нельзя загрузить с этого устройства.");
-      }
-      setDraft(localDraft || value.draft_reply || "");
-      setReviewed(localReviewed);
-      setSaved(Boolean(localDraft));
+      setDraft(value.draft_reply || "");
+      setReviewed(value.draft_status === "reviewed" || value.draft_status === "approved");
+      setSaved(Boolean(value.draft_id));
     }).catch((reason: unknown) => {
       if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "Не удалось загрузить черновик.");
     }).finally(() => { if (!controller.signal.aborted) setLoading(false); });
@@ -68,26 +57,59 @@ export function DraftsPage() {
     }
   }
 
-  function saveDraft() {
-    if (!ticket) return;
+  async function saveDraft() {
+    if (!ticket || savingAction) return;
+    setSavingAction("save");
     try {
-      window.localStorage.setItem(localKey(ticket.ticket_id), draft);
+      await persistDraft(ticket.ticket_id, ticket.draft_id ?? null, draft.trim());
+      const updated = await getTicket(ticket.ticket_id);
+      setTicket(updated);
+      setDraft(updated.draft_reply ?? draft);
       setSaved(true);
-      notify("Черновик сохранён в этом браузере.");
-    } catch {
-      notify("Не удалось сохранить черновик в локальном хранилище.", "error");
+      await refresh();
+      notify("Черновик сохранён в Backend.");
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : "Не удалось сохранить черновик.", "error");
+    } finally {
+      setSavingAction(null);
     }
   }
 
-  function toggleReviewed() {
-    if (!ticket) return;
+  async function regenerateDraft() {
+    if (!ticket || savingAction) return;
+    setSavingAction("generate");
+    setError(null);
+    try {
+      await regenerateReply(ticket.ticket_id);
+      const updated = await getTicket(ticket.ticket_id);
+      setTicket(updated);
+      setDraft(updated.draft_reply ?? "");
+      setSaved(Boolean(updated.draft_id));
+      setReviewed(updated.draft_status === "reviewed" || updated.draft_status === "approved");
+      await refresh();
+      notify("Новый черновик создан. Проверьте его перед использованием.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Не удалось создать черновик.");
+    } finally {
+      setSavingAction(null);
+    }
+  }
+
+  async function toggleReviewed() {
+    if (!ticket || savingAction) return;
+    setSavingAction("review");
     const next = !reviewed;
     try {
-      window.localStorage.setItem(`sc-reviewed:${ticket.ticket_id}`, String(next));
+      await recordDecision(ticket.ticket_id, next ? "mark_reviewed" : "unmark_reviewed", ticket.draft_id);
+      const updated = await getTicket(ticket.ticket_id);
+      setTicket(updated);
       setReviewed(next);
-      notify(next ? "Отметка сохранена локально." : "Отметка снята.");
-    } catch {
-      notify("Не удалось сохранить отметку проверки.", "error");
+      await refresh();
+      notify(next ? "Проверка записана." : "Отметка проверки снята.");
+    } catch (reason) {
+      notify(reason instanceof Error ? reason.message : "Не удалось сохранить решение.", "error");
+    } finally {
+      setSavingAction(null);
     }
   }
 
@@ -95,7 +117,7 @@ export function DraftsPage() {
     <>
       <PageHeading eyebrow="ОТВЕТЫ ДЛЯ ПРОВЕРКИ" title="Response Drafts" description="Редактируйте и проверяйте черновики перед ручной отправкой игроку." />
       {ticketsLoading && candidates.length === 0 ? <section className="panel"><LoadingState label="Загружаем черновики" /></section> : ticketsError && candidates.length === 0 ? <ErrorState message={ticketsError} onRetry={() => void refresh()} /> : candidates.length === 0 ? (
-        <div className="panel"><div className="table-empty"><div className="empty-icon"><FileText size={18} /></div><strong>Черновиков пока нет</strong><span>Создайте черновик вручную для обращения. AI-генерация и отправка ответа отключены.</span><Link className="button button-secondary" to="/tickets">К обращениям</Link></div></div>
+        <div className="panel"><div className="table-empty"><div className="empty-icon"><FileText size={18} /></div><strong>Черновиков пока нет</strong><span>Выберите обращение и сохраните или сгенерируйте черновик для проверки оператором.</span><Link className="button button-secondary" to="/tickets">К обращениям</Link></div></div>
       ) : (
         <div className="drafts-layout">
           <aside className="panel draft-list-panel">
@@ -129,13 +151,14 @@ export function DraftsPage() {
                   {ticket.ai_analysis?.unknowns?.length ? <div className="draft-warning"><AlertTriangle size={15} /><span><strong>Есть неподтверждённые сведения.</strong> Не представляйте их как установленные факты: {ticket.ai_analysis.unknowns.join(" ")}</span></div> : null}
                   {ticket.ai_analysis?.escalation_required && <div className="draft-warning"><AlertTriangle size={15} /><span><strong>Рекомендуется эскалация.</strong> {ticket.ai_analysis.escalation_reason || "Причина не указана."}</span></div>}
                   <label className="field-label draft-text-label">Текст ответа<textarea aria-label="Редактор текста ответа" onChange={(event) => { setDraft(event.target.value); setSaved(false); }} placeholder="Черновик ещё не сформирован. Запустите AI-анализ для обращения." rows={10} value={draft} /></label>
-                  <div className="draft-save-state">{saved ? <><Check size={13} /> Сохранено локально</> : <><Save size={13} /> Изменения не сохранены</>}<span>Локально · backend не поддерживает сохранение черновика</span></div>
+                  <div className="draft-save-state">{saved ? <><Check size={13} /> Сохранено в Backend</> : <><Save size={13} /> Изменения не сохранены</>}<span>Сохранение не отправляет сообщение игроку</span></div>
                   <div className="draft-actions">
                     <button className="button button-secondary" disabled={!draft} onClick={() => void copyDraft()} type="button"><Clipboard size={14} /> Копировать</button>
-                    <button className="button button-secondary" disabled={!draft} onClick={saveDraft} type="button"><Save size={14} /> Сохранить изменения</button>
-                    <button className={`button ${reviewed ? "button-secondary" : "button-primary"}`} onClick={toggleReviewed} type="button">{reviewed ? <Check size={14} /> : <Check size={14} />}{reviewed ? "Снять проверку" : "Отметить проверенным"}</button>
+                    <button className="button button-secondary" disabled={!draft.trim() || Boolean(savingAction)} onClick={() => void saveDraft()} type="button"><Save size={14} /> {savingAction === "save" ? "Сохраняем..." : "Сохранить изменения"}</button>
+                    <button className="button button-secondary" disabled={!ticket.ai_analysis || Boolean(savingAction)} onClick={() => void regenerateDraft()} type="button"><RotateCw size={14} /> {savingAction === "generate" ? "Генерируем..." : "Перегенерировать"}</button>
+                    <button className={`button ${reviewed ? "button-secondary" : "button-primary"}`} disabled={!ticket.draft_id || Boolean(savingAction)} onClick={() => void toggleReviewed()} type="button"><Check size={14} /> {savingAction === "review" ? "Сохраняем..." : reviewed ? "Снять проверку" : "Отметить проверенным"}</button>
                   </div>
-                  <p className="send-warning">Черновик и отметка проверки сохраняются только в этом браузере. AI-генерация и отправка ответа отключены.</p>
+                  <p className="send-warning">Черновик и отметка проверки сохраняются на Backend. Ответ игроку автоматически не отправляется.</p>
                 </div>
               </>
             )}

@@ -6,8 +6,12 @@ from app.ai_engine.models import (
     AnalysisResult,
     AttachmentEvidence,
     MatchedRule,
+    StructuredAnalysisResult,
+    SupportCategory,
     TicketCategory,
 )
+from app.ai_engine.providers import AnalysisProvider, OpenAICompatibleProvider
+from app.ai_engine.services import TicketAnalysisService
 
 
 class RuleProvider(Protocol):
@@ -368,85 +372,65 @@ def _draft_reply(language: str, rules: list[MatchedRule]) -> str:
 
 
 class SupportAnalysisEngine:
-    def __init__(self, rule_provider: RuleProvider) -> None:
+    def __init__(
+        self,
+        rule_provider: RuleProvider,
+        provider: AnalysisProvider | None = None,
+    ) -> None:
         self.rule_provider = rule_provider
+        configured_provider = provider or OpenAICompatibleProvider.from_environment()
+        self.analysis_service = TicketAnalysisService(rule_provider, configured_provider)
+
+    def analyze_structured(self, ticket: dict[str, Any]):
+        return self.analysis_service.analyze(ticket)
 
     def analyze(self, ticket: dict[str, Any]) -> AnalysisResult:
-        message = str(ticket.get("message", "")).strip()
-        if not message:
-            raise ValueError("Ticket message must not be empty")
+        result, _model_name = self.analyze_structured(ticket)
+        return self.to_legacy_result(result)
 
-        attachments = list(ticket.get("attachments") or [])
-        language = detect_language(message)
-        category, category_reason, confidence = classify_ticket(message)
-        rules = self.rule_provider.list_rules(
-            query=None, language=None, limit=10000
-        )
-        matched_rules = retrieve_rules(message, rules, language=language)
-
-        escalation_reasons: list[str] = []
-        if category in {
-            TicketCategory.APPEAL_BAN,
-            TicketCategory.ADMIN_COMPLAINT,
-            TicketCategory.ACCOUNT_SECURITY,
-        }:
-            escalation_reasons.append(
-                f"Категория «{category.value}» требует решения оператора."
-            )
-        if _contains_term(message, THREAT_TERMS):
-            escalation_reasons.append(
-                "Обнаружены признаки серьёзной угрозы или опасной ситуации."
-            )
-        if _contains_term(message, LOG_TERMS):
-            escalation_reasons.append(
-                "Для проверки могут потребоваться недоступные модулю системные логи."
-            )
-        if _contains_term(message, CONTRADICTION_TERMS):
-            escalation_reasons.append(
-                "В обращении указаны возможные противоречия; требуется ручная проверка."
-            )
-        if category == TicketCategory.PLAYER_REPORT:
-            if attachments:
-                escalation_reasons.append(
-                    "Содержимое вложений не анализировалось; достаточность доказательств "
-                    "должен оценить оператор."
-                )
-            else:
-                escalation_reasons.append(
-                    "Жалоба на игрока не содержит вложений для подтверждения утверждений."
-                )
-        if not matched_rules:
-            escalation_reasons.append(
-                "Подходящий пункт не найден в доступной базе проверенных правил."
-            )
-        if confidence < 0.5:
-            escalation_reasons.append(
-                "Уверенность классификации низкая; автоматическое решение невозможно."
-            )
-
+    @staticmethod
+    def to_legacy_result(result: StructuredAnalysisResult) -> AnalysisResult:
+        categories = {
+            SupportCategory.APPEAL_BAN: TicketCategory.APPEAL_BAN,
+            SupportCategory.PLAYER_REPORT: TicketCategory.PLAYER_REPORT,
+            SupportCategory.ADMIN_COMPLAINT: TicketCategory.ADMIN_COMPLAINT,
+            SupportCategory.ACCOUNT_SECURITY: TicketCategory.ACCOUNT_SECURITY,
+            SupportCategory.PAYMENT: TicketCategory.PAYMENT_PURCHASE,
+            SupportCategory.BUG: TicketCategory.BUG_TECHNICAL,
+            SupportCategory.OTHER: TicketCategory.OTHER_UNCLEAR,
+        }
         return AnalysisResult(
-            category=category,
-            category_reason=category_reason,
-            language=language,
-            summary=_claims(message)[0][:500],
-            player_claims=_claims(message),
+            category=categories[result.category],
+            category_reason=result.analysis,
+            language=result.language.value,
+            summary=result.summary,
+            player_claims=result.player_claims,
             attachments=[
                 AttachmentEvidence(
-                    attachment_id=str(item.get("attachment_id", "")),
-                    filename=str(item.get("filename", "attachment")),
-                    content_type=str(
-                        item.get("content_type", "application/octet-stream")
-                    ),
-                    size_bytes=max(0, int(item.get("size_bytes", 0))),
+                    attachment_id=item.attachment_id,
+                    filename=item.filename,
+                    content_type=item.content_type,
+                    size_bytes=item.size_bytes,
                     inspected=False,
                 )
-                for item in attachments
+                for item in result.provided_evidence
             ],
-            verified_system_data=[],
-            unknowns=_unknowns(category, attachments, message),
-            matched_rules=matched_rules,
-            draft_reply=_draft_reply(language, matched_rules),
-            confidence=confidence,
-            escalation_required=bool(escalation_reasons),
-            escalation_reason=" ".join(escalation_reasons),
+            verified_system_data=result.verified_data,
+            unknowns=result.unknowns,
+            matched_rules=[
+                MatchedRule(
+                    document_name=rule.document_title,
+                    rule_id=rule.rule_number,
+                    rule_title=rule.rule_number,
+                    excerpt=rule.exact_excerpt,
+                    source_url=rule.source_url,
+                    language=result.language.value,
+                    version_or_date=rule.source_version_date,
+                )
+                for rule in result.rule_references
+            ],
+            draft_reply=result.draft_reply,
+            confidence=result.confidence,
+            escalation_required=result.human_review_required,
+            escalation_reason=" ".join(result.escalation_reasons),
         )

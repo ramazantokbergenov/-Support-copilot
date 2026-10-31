@@ -6,8 +6,10 @@ from typing import Any
 import httpx
 
 from app.ai_engine import AnalysisResult, SupportAnalysisEngine, TicketCategory
+from app.ai_engine.models import StructuredAnalysisResult, SupportCategory, SupportLanguage
 from app.database import TicketRepository
 from app.main import create_app
+from app.ai_engine.services import TicketAnalysisService
 
 
 class StaticRuleProvider:
@@ -110,6 +112,168 @@ class AiClassificationTests(unittest.TestCase):
         self.assertTrue(result.escalation_required)
 
 
+class StructuredAnalysisServiceTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.rules = StaticRuleProvider()
+        self.service = TicketAnalysisService(self.rules)
+
+    def analyze(self, ticket_id: str, message: str, **extra: Any) -> StructuredAnalysisResult:
+        result, _model = self.service.analyze({
+            "ticket_id": ticket_id,
+            "player_id": "player-1",
+            "message": message,
+            **extra,
+        })
+        return result
+
+    def test_t1_ban_appeal_requires_human_review(self) -> None:
+        result = self.analyze("T1", "Прошу обжаловать бан, меня заблокировали.")
+        self.assertEqual(result.category, SupportCategory.APPEAL_BAN)
+        self.assertEqual(result.language, SupportLanguage.RU)
+        self.assertTrue(result.human_review_required)
+
+    def test_t2_chat_insults_are_claims_not_verified_facts(self) -> None:
+        result = self.analyze("T2", "Игрок оскорблял меня в чате.")
+        self.assertEqual(result.category, SupportCategory.PLAYER_REPORT)
+        self.assertTrue(result.player_claims)
+        self.assertEqual(result.verified_data, [])
+        self.assertTrue(result.human_review_required)
+
+    def test_t3_administrator_complaint_is_escalated(self) -> None:
+        result = self.analyze("T3", "Жалоба на администратора: он некорректно общался.")
+        self.assertEqual(result.category, SupportCategory.ADMIN_COMPLAINT)
+        self.assertTrue(result.human_review_required)
+
+    def test_t4_suspected_account_compromise_is_escalated(self) -> None:
+        result = self.analyze("T4", "Мой аккаунт взломали, я не могу войти.")
+        self.assertEqual(result.category, SupportCategory.ACCOUNT_SECURITY)
+        self.assertTrue(result.human_review_required)
+
+    def test_t5_cheating_report_is_not_verified(self) -> None:
+        result = self.analyze("T5", "Игрок читерит и получает нечестное преимущество.")
+        self.assertEqual(result.category, SupportCategory.PLAYER_REPORT)
+        self.assertEqual(result.verified_data, [])
+        self.assertTrue(result.human_review_required)
+
+    def test_t6_unclear_complaint_requests_clarification(self) -> None:
+        result = self.analyze("T6", "Помогите разобраться, пожалуйста.")
+        self.assertEqual(result.category, SupportCategory.OTHER)
+        self.assertTrue(result.missing_information_questions)
+        self.assertTrue(result.human_review_required)
+
+    def test_kazakh_and_uzbek_languages_are_detected(self) -> None:
+        kazakh = self.analyze("KK", "Ойыншымның аккаунтын бұзып кірді")
+        uzbek = self.analyze("UZ", "Akkauntimga buzib kirishdi")
+        uzbek_cyrillic = self.analyze("UZ-CYR", "Аккаунтимга бузиб киришди")
+        self.assertEqual(kazakh.language, SupportLanguage.KK)
+        self.assertEqual(uzbek.language, SupportLanguage.UZ)
+        self.assertEqual(uzbek_cyrillic.language, SupportLanguage.UZ)
+
+    def test_rule_without_version_or_https_source_is_never_cited(self) -> None:
+        self.rules.rules = [{
+            "document_name": "Unverified fixture",
+            "rule_id": "1.1",
+            "rule_title": "Cheating",
+            "rule_text": "Использование читов запрещено правилами игры.",
+            "source_url": "http://example.test/rules",
+            "language": "ru",
+            "version_or_date": None,
+        }]
+        result = self.analyze("RULES", "Игрок использовал читы по правилам игры.")
+        self.assertEqual(result.rule_references, [])
+        self.assertTrue(any("источник" in item for item in result.escalation_reasons))
+
+    def test_malformed_provider_output_falls_back_to_cautious_result(self) -> None:
+        class MalformedProvider:
+            def analyze(self, _payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
+                return {"category": "not-a-category", "unexpected": True}, "broken-model"
+
+        service = TicketAnalysisService(self.rules, MalformedProvider())
+        result, model_name = service.analyze({
+            "ticket_id": "BAD-JSON",
+            "message": "Прошу обжаловать бан.",
+        })
+        self.assertEqual(model_name, "deterministic-fallback")
+        self.assertEqual(result.category, SupportCategory.OTHER)
+        self.assertTrue(result.human_review_required)
+        self.assertTrue(any("AI-провайдер" in item for item in result.escalation_reasons))
+
+    def test_provider_failure_falls_back_without_claiming_verified_data(self) -> None:
+        class FailedProvider:
+            def analyze(self, _payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
+                raise RuntimeError("provider unavailable")
+
+        service = TicketAnalysisService(self.rules, FailedProvider())
+        result, model_name = service.analyze({
+            "ticket_id": "PROVIDER-FAIL",
+            "message": "Мой аккаунт взломали.",
+        })
+        self.assertEqual(model_name, "deterministic-fallback")
+        self.assertEqual(result.verified_data, [])
+        self.assertTrue(result.human_review_required)
+
+    def test_rule_source_failure_returns_no_references_and_escalates(self) -> None:
+        class FailedRuleSource:
+            def list_rules(self, **_kwargs: Any) -> list[dict[str, Any]]:
+                raise RuntimeError("vector database unavailable")
+
+        result, _model = TicketAnalysisService(FailedRuleSource()).analyze({
+            "ticket_id": "RULE-SOURCE-FAIL",
+            "message": "Прошу проверить покупку и платеж.",
+        })
+        self.assertEqual(result.rule_references, [])
+        self.assertTrue(any("недоступен" in item for item in result.unknowns))
+        self.assertTrue(result.human_review_required)
+
+    def test_strict_schema_rejects_unexpected_fields(self) -> None:
+        result, _model = self.service.analyze({
+            "ticket_id": "STRICT",
+            "message": "Проблема с покупкой, не пришёл донат.",
+        })
+        payload = result.model_dump(mode="json")
+        payload["invented_fact"] = "verified"
+        with self.assertRaises(Exception):
+            StructuredAnalysisResult.model_validate(payload)
+
+    def test_client_or_model_cannot_supply_verified_system_data(self) -> None:
+        class InjectingProvider:
+            def analyze(self, payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
+                result, _ = TicketAnalysisService(StaticRuleProvider()).analyze({
+                    "ticket_id": payload["ticket_id"],
+                    "message": payload["message"],
+                })
+                response = result.model_dump(mode="json")
+                response["verified_data"] = ["Player is guilty"]
+                return response, "fixture"
+
+        service = TicketAnalysisService(self.rules, InjectingProvider())
+        result, _ = service.analyze({
+            "ticket_id": "UNTRUSTED",
+            "message": "Игрок использовал читы.",
+            "verified_data": ["client says verified"],
+        })
+        self.assertEqual(result.verified_data, [])
+
+    def test_unsafe_provider_draft_is_replaced_and_marked_for_review(self) -> None:
+        class UnsafeDraftProvider:
+            def analyze(self, payload: dict[str, Any]) -> tuple[dict[str, Any], str]:
+                result, _ = TicketAnalysisService(StaticRuleProvider()).analyze({
+                    "ticket_id": payload["ticket_id"],
+                    "message": payload["message"],
+                })
+                response = result.model_dump(mode="json")
+                response["draft_reply"] = "We guarantee the account will be restored: https://unverified.test"
+                return response, "unsafe-fixture"
+
+        result, _model = TicketAnalysisService(self.rules, UnsafeDraftProvider()).analyze({
+            "ticket_id": "UNSAFE-DRAFT",
+            "message": "Прошу обжаловать бан.",
+        })
+        self.assertNotIn("guarantee", result.draft_reply.casefold())
+        self.assertNotIn("unverified.test", result.draft_reply)
+        self.assertIn("черновик", result.draft_reply.casefold())
+
+
 class AiApiIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -162,6 +326,23 @@ class AiApiIntegrationTests(unittest.IsolatedAsyncioTestCase):
     async def test_analysis_missing_ticket_returns_404(self) -> None:
         response = await self.client.post("/tickets/missing/analyze")
         self.assertEqual(response.status_code, 404)
+
+    async def test_structured_analysis_endpoint_returns_strict_contract_and_keeps_legacy_details(self) -> None:
+        response = await self.client.post(
+            f"/tickets/{self.ticket['ticket_id']}/analyze-structured"
+        )
+        self.assertEqual(response.status_code, 200, response.text)
+        structured = StructuredAnalysisResult.model_validate(response.json())
+        self.assertEqual(structured.ticket_id, self.ticket["ticket_id"])
+        self.assertEqual(structured.verified_data, [])
+
+        details = await self.client.get(f"/tickets/{self.ticket['ticket_id']}")
+        self.assertEqual(details.status_code, 200)
+        self.assertIn("attachments", details.json()["ai_analysis"])
+        self.assertIn("verified_system_data", details.json()["ai_analysis"])
+        self.assertIn("provided_evidence", details.json()["ai_analysis"])
+        self.assertIn("missing_information_questions", details.json()["ai_analysis"])
+        self.assertIn("escalation_reasons", details.json()["ai_analysis"])
 
 
 if __name__ == "__main__":

@@ -17,6 +17,8 @@ export interface TicketSummary {
   confidence: number | null;
   escalation_required: boolean | null;
   created_at: string;
+  language?: string | null;
+  summary?: string | null;
 }
 
 export interface TicketAttachment {
@@ -54,6 +56,11 @@ export interface AiAnalysis {
   confidence: number;
   escalation_required: boolean;
   escalation_reason: string | null;
+  priority?: string;
+  provided_evidence?: AnalysisAttachment[];
+  missing_information_questions?: string[];
+  escalation_reasons?: string[];
+  human_review_required?: boolean;
 }
 
 export interface TicketDetail extends TicketSummary {
@@ -62,8 +69,71 @@ export interface TicketDetail extends TicketSummary {
   extracted_facts: string[] | null;
   matched_rules: RuleRecord[];
   draft_reply: string | null;
+  draft_id?: string | null;
+  draft_version?: number | null;
+  draft_status?: string | null;
   escalation_reason: string | null;
   ai_analysis: AiAnalysis | null;
+  operator_notes?: OperatorNote[];
+}
+
+export interface TicketListResponse {
+  items: TicketSummary[];
+  count: number;
+  limit: number;
+  offset: number;
+}
+
+export interface StructuredAnalysisResult {
+  ticket_id: string;
+  language: "ru" | "kk" | "uz" | "other";
+  category: "appeal_ban" | "player_report" | "admin_complaint" | "account_security" | "payment" | "bug" | "other";
+  priority: "low" | "normal" | "high" | "urgent";
+  summary: string;
+  player_claims: string[];
+  provided_evidence: TicketAttachment[];
+  verified_data: string[];
+  unknowns: string[];
+  missing_information_questions: string[];
+  rule_references: OfficialRuleReference[];
+  analysis: string;
+  draft_reply: string;
+  human_review_required: boolean;
+  escalation_reasons: string[];
+  confidence: number;
+}
+
+export interface OfficialRuleReference {
+  document_title: string;
+  rule_number: string;
+  exact_excerpt: string;
+  source_url: string;
+  source_version_date: string;
+}
+
+export interface DraftRecord {
+  id: string;
+  ticket_id: string;
+  body: string;
+  status: string;
+  version: number;
+  created_at: string;
+}
+
+export interface OperatorNote {
+  id: string;
+  operator_id: string;
+  body: string;
+  created_at: string;
+}
+
+export interface OperatorEvent {
+  id: string;
+  operator_id: string | null;
+  action: string;
+  old_value: unknown;
+  new_value: unknown;
+  created_at: string;
 }
 
 export interface RuleList {
@@ -77,4 +147,13 @@ export interface CreateTicketInput {
   category?: string;
   priority: TicketPriority;
   attachments: File[];
+}
+
+export interface TicketQuery {
+  q?: string;
+  status?: TicketStatus | "";
+  priority?: TicketPriority | "";
+  category?: string;
+  limit?: number;
+  offset?: number;
 }

@@ -1,15 +1,20 @@
+import os
 import uuid
 from datetime import UTC, datetime
 from urllib.parse import quote
 
 from fastapi import FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, Response
 
 from app.ai_engine import AnalysisResult, SupportAnalysisEngine
+from app.ai_engine.models import StructuredAnalysisResult
 from app.database import DEFAULT_DATABASE_PATH, TicketRepository
 from app.models import (
     AnalysisSubmission,
+    DecisionSubmission,
+    DraftBody,
     ErrorDetail,
     ErrorResponse,
     RuleList,
@@ -19,6 +24,7 @@ from app.models import (
     TicketStatus,
     TicketSummary,
     StatusUpdate,
+    OperatorNoteSubmission,
 )
 
 
@@ -35,6 +41,21 @@ def create_app(repository: TicketRepository | None = None) -> FastAPI:
             "Local ticket-management API. AI analysis is submitted by a separate "
             "trusted module; player-facing replies are never sent automatically."
         ),
+    )
+    allowed_origins = [
+        origin.strip()
+        for origin in os.environ.get(
+            "ALLOWED_ORIGINS",
+            "http://localhost:5173,http://127.0.0.1:5173",
+        ).split(",")
+        if origin.strip()
+    ]
+    application.add_middleware(
+        CORSMiddleware,
+        allow_origins=allowed_origins,
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "PATCH", "OPTIONS"],
+        allow_headers=["Authorization", "Content-Type", "Accept"],
     )
     application.state.repository = repository
 
@@ -173,6 +194,7 @@ def create_app(repository: TicketRepository | None = None) -> FastAPI:
         status: TicketStatus | None = None,
         category: str | None = Query(default=None, max_length=100),
         priority: TicketPriority | None = None,
+        q: str | None = Query(default=None, max_length=128),
         limit: int = Query(default=50, ge=1, le=100),
         offset: int = Query(default=0, ge=0),
     ) -> list[dict]:
@@ -180,6 +202,7 @@ def create_app(repository: TicketRepository | None = None) -> FastAPI:
             status=status.value if status else None,
             category=category,
             priority=priority.value if priority else None,
+            query=q,
             limit=limit,
             offset=offset,
         )
@@ -278,6 +301,183 @@ def create_app(repository: TicketRepository | None = None) -> FastAPI:
             },
         )
         if not saved:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        return result
+
+    @application.post(
+        "/tickets/{ticket_id}/analyze-structured",
+        response_model=StructuredAnalysisResult,
+        responses={404: {"model": ErrorResponse}},
+    )
+    def analyze_ticket_structured(ticket_id: str) -> StructuredAnalysisResult:
+        repository = get_repository()
+        ticket = repository.get_ticket(ticket_id)
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+
+        engine = SupportAnalysisEngine(repository)
+        structured, _model_name = engine.analyze_structured(ticket)
+        legacy = engine.to_legacy_result(structured)
+        extracted_facts = [
+            *(f"PLAYER_CLAIMS: {claim}" for claim in structured.player_claims),
+            *(
+                f"ATTACHMENTS: {item.filename} "
+                f"({item.content_type}, {item.size_bytes} bytes; not inspected)"
+                for item in structured.provided_evidence
+            ),
+            *(f"VERIFIED_SYSTEM_DATA: {fact}" for fact in structured.verified_data),
+            *(f"UNKNOWN: {unknown}" for unknown in structured.unknowns),
+        ]
+        try:
+            saved = repository.save_analysis(
+                ticket_id,
+                {
+                    "category": legacy.category.value,
+                    "priority": ticket["priority"],
+                    "extracted_facts": extracted_facts,
+                    "matched_rules": [
+                        {"document_name": item.document_title, "rule_id": item.rule_number}
+                        for item in structured.rule_references
+                    ],
+                    "draft_reply": structured.draft_reply,
+                    "confidence": structured.confidence,
+                    "escalation_required": structured.human_review_required,
+                    "escalation_reason": " ".join(structured.escalation_reasons) or None,
+                    "ai_analysis": {
+                        **legacy.model_dump(mode="json"),
+                        **structured.model_dump(mode="json"),
+                        "category_reason": structured.analysis,
+                        "attachments": [
+                            {
+                                **item.model_dump(mode="json"),
+                                "inspected": False,
+                            }
+                            for item in structured.provided_evidence
+                        ],
+                        "verified_system_data": structured.verified_data,
+                        "matched_rules": legacy.model_dump(mode="json")["matched_rules"],
+                        "escalation_required": structured.human_review_required,
+                        "escalation_reason": " ".join(structured.escalation_reasons) or None,
+                    },
+                },
+            )
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail={"code": "unknown_rule", "message": str(exc)},
+            ) from exc
+        if not saved:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        return structured
+
+    @application.post(
+        "/tickets/{ticket_id}/generate-reply",
+        status_code=201,
+        responses={404: {"model": ErrorResponse}, 409: {"model": ErrorResponse}},
+    )
+    def generate_reply(ticket_id: str) -> dict:
+        repository = get_repository()
+        ticket = repository.get_ticket(ticket_id)
+        if ticket is None:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        if ticket.get("ai_analysis") is None:
+            raise HTTPException(
+                status_code=409,
+                detail={"code": "analysis_required", "message": "Analyze the ticket before generating a reply."},
+            )
+        structured, model_name = SupportAnalysisEngine(repository).analyze_structured(ticket)
+        draft = repository.save_draft(
+            ticket_id,
+            structured.draft_reply,
+            draft_id=None,
+            operator_id="local-operator",
+            now=datetime.now(UTC).isoformat(),
+        )
+        if draft is None:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        return {**draft, "model_name": model_name}
+
+    @application.post(
+        "/tickets/{ticket_id}/drafts",
+        status_code=201,
+        responses={404: {"model": ErrorResponse}},
+    )
+    def create_draft(ticket_id: str, draft: DraftBody) -> dict:
+        saved = get_repository().save_draft(
+            ticket_id,
+            draft.body,
+            draft_id=None,
+            operator_id="local-operator",
+            now=datetime.now(UTC).isoformat(),
+        )
+        if saved is None:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        return saved
+
+    @application.put(
+        "/tickets/{ticket_id}/drafts/{draft_id}",
+        responses={404: {"model": ErrorResponse}},
+    )
+    def update_draft(ticket_id: str, draft_id: str, draft: DraftBody) -> dict:
+        saved = get_repository().save_draft(
+            ticket_id,
+            draft.body,
+            draft_id=draft_id,
+            operator_id="local-operator",
+            now=datetime.now(UTC).isoformat(),
+        )
+        if saved is None:
+            raise HTTPException(status_code=404, detail="Draft or ticket not found")
+        return saved
+
+    @application.post(
+        "/tickets/{ticket_id}/decisions",
+        status_code=201,
+        responses={404: {"model": ErrorResponse}, 422: {"model": ErrorResponse}},
+    )
+    def record_decision(ticket_id: str, decision: DecisionSubmission) -> dict:
+        allowed = {"mark_reviewed", "unmark_reviewed", "approve", "reject", "escalate", "request_information"}
+        if decision.decision not in allowed:
+            raise HTTPException(status_code=422, detail="Invalid operator decision")
+        result = get_repository().record_decision(
+            ticket_id,
+            decision.decision,
+            draft_id=decision.draft_id,
+            note=decision.note,
+            operator_id="local-operator",
+            now=datetime.now(UTC).isoformat(),
+        )
+        if result is None:
+            raise HTTPException(status_code=404, detail="Ticket or draft not found")
+        return result
+
+    @application.post(
+        "/tickets/{ticket_id}/notes",
+        status_code=201,
+        responses={404: {"model": ErrorResponse}},
+    )
+    def add_operator_note(ticket_id: str, note: OperatorNoteSubmission) -> dict:
+        result = get_repository().add_operator_note(
+            ticket_id,
+            note.body,
+            operator_id="local-operator",
+            note_id=str(uuid.uuid4()),
+            now=datetime.now(UTC).isoformat(),
+        )
+        if result is None:
+            raise HTTPException(status_code=404, detail="Ticket not found")
+        return result
+
+    @application.get(
+        "/tickets/{ticket_id}/events",
+        responses={404: {"model": ErrorResponse}},
+    )
+    def list_ticket_events(
+        ticket_id: str,
+        limit: int = Query(default=50, ge=1, le=100),
+    ) -> list[dict]:
+        result = get_repository().list_ticket_events(ticket_id, limit)
+        if result is None:
             raise HTTPException(status_code=404, detail="Ticket not found")
         return result
 

@@ -16,7 +16,7 @@ export function HistoryPage() {
   return (
     <>
       <PageHeading eyebrow="ЖУРНАЛ ОБРАЩЕНИЙ" title="History" description="Хронология поступивших обращений и их текущие статусы." />
-      <div className="notice-banner"><Clock3 size={16} /><span>Backend хранит дату создания и текущий статус. История действий, изменений черновика и решений операторов не подключена.</span></div>
+      <div className="notice-banner"><Clock3 size={16} /><span>Список обращений и их текущие статусы загружаются из Backend. События конкретного обращения доступны в его карточке.</span></div>
       {loading && tickets.length === 0 ? <section className="panel"><LoadingState label="Загружаем историю" /></section> : error && tickets.length === 0 ? <ErrorState message={error} onRetry={() => void refresh()} /> : null}
       <section className="panel list-panel">
         <div className="list-panel-toolbar">
@@ -27,7 +27,7 @@ export function HistoryPage() {
           <Link className="history-entry" key={ticket.ticket_id} to={`/tickets/${encodeURIComponent(ticket.ticket_id)}`}>
             <span className="history-entry-icon"><Clock3 size={15} /></span><span className="history-entry-main"><strong>{ticket.ticket_id} · {ticket.category || "Без категории"}</strong><small>Игрок {ticket.player_id}</small><small>Создано · {formatDate(ticket.created_at)}</small></span><StatusBadge status={ticket.status} /><span className="history-date">{formatDate(ticket.created_at)}</span>
           </Link>
-        ))}</div> : <div className="table-empty"><div className="empty-icon"><Clock3 size={18} /></div><strong>{tickets.length ? "Записей не найдено" : "История пока пуста"}</strong><span>Здесь появятся локальные обращения, созданные оператором в браузере.</span></div>}
+        ))}</div> : <div className="table-empty"><div className="empty-icon"><Clock3 size={18} /></div><strong>{tickets.length ? "Записей не найдено" : "История пока пуста"}</strong><span>Здесь отображаются обращения, полученные из Backend.</span></div>}
       </section>
     </>
   );

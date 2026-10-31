@@ -1,7 +1,9 @@
 import json
 import os
 import sqlite3
+import uuid
 from contextlib import contextmanager
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Generator
 
@@ -83,12 +85,49 @@ class TicketRepository:
                         REFERENCES rules(document_name, rule_id)
                 );
 
+                CREATE TABLE IF NOT EXISTS ticket_reply_drafts (
+                    draft_id TEXT PRIMARY KEY,
+                    ticket_id TEXT NOT NULL REFERENCES tickets(ticket_id) ON DELETE CASCADE,
+                    body TEXT NOT NULL,
+                    version INTEGER NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending_review',
+                    created_by TEXT NOT NULL,
+                    updated_by TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    UNIQUE(ticket_id, version)
+                );
+
+                CREATE TABLE IF NOT EXISTS operator_notes (
+                    note_id TEXT PRIMARY KEY,
+                    ticket_id TEXT NOT NULL REFERENCES tickets(ticket_id) ON DELETE CASCADE,
+                    operator_id TEXT NOT NULL,
+                    body TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS audit_logs (
+                    event_id TEXT PRIMARY KEY,
+                    ticket_id TEXT NOT NULL REFERENCES tickets(ticket_id) ON DELETE CASCADE,
+                    operator_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    old_value TEXT,
+                    new_value TEXT,
+                    created_at TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_tickets_created_at
                     ON tickets(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_tickets_status
                     ON tickets(status);
                 CREATE INDEX IF NOT EXISTS idx_rules_language
                     ON rules(language);
+                CREATE INDEX IF NOT EXISTS idx_drafts_ticket_version
+                    ON ticket_reply_drafts(ticket_id, version DESC);
+                CREATE INDEX IF NOT EXISTS idx_notes_ticket_created
+                    ON operator_notes(ticket_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_audit_ticket_created
+                    ON audit_logs(ticket_id, created_at DESC);
                 """
             )
             ticket_columns = {
@@ -149,6 +188,7 @@ class TicketRepository:
         status: str | None,
         category: str | None,
         priority: str | None,
+        query: str | None = None,
         limit: int,
         offset: int,
     ) -> list[dict[str, Any]]:
@@ -162,6 +202,15 @@ class TicketRepository:
             if value is not None:
                 clauses.append(f"{column} = ?")
                 parameters.append(value)
+        if query and query.strip():
+            clauses.append(
+                "(instr(lower(ticket_id), lower(?)) > 0 "
+                "OR instr(lower(player_id), lower(?)) > 0 "
+                "OR instr(lower(message), lower(?)) > 0 "
+                "OR instr(lower(coalesce(category, '')), lower(?)) > 0)"
+            )
+            search = query.strip()[:128]
+            parameters.extend((search, search, search, search))
         where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
         parameters.extend((limit, offset))
         with self._connection() as connection:
@@ -203,6 +252,16 @@ class TicketRepository:
                 """,
                 (ticket_id,),
             ).fetchall()
+            draft = connection.execute(
+                """SELECT draft_id, version, status FROM ticket_reply_drafts
+                   WHERE ticket_id = ? ORDER BY version DESC LIMIT 1""",
+                (ticket_id,),
+            ).fetchone()
+            notes = connection.execute(
+                """SELECT note_id, operator_id, body, created_at FROM operator_notes
+                   WHERE ticket_id = ? ORDER BY created_at DESC LIMIT 20""",
+                (ticket_id,),
+            ).fetchall()
         ticket = dict(row)
         ticket["extracted_facts"] = (
             json.loads(ticket["extracted_facts"])
@@ -222,15 +281,230 @@ class TicketRepository:
         )
         ticket["attachments"] = [dict(item) for item in attachments]
         ticket["matched_rules"] = [dict(item) for item in rules]
+        ticket["draft_id"] = draft["draft_id"] if draft else None
+        ticket["draft_version"] = draft["version"] if draft else None
+        ticket["draft_status"] = draft["status"] if draft else None
+        ticket["operator_notes"] = [
+            {
+                "id": note["note_id"],
+                "operator_id": note["operator_id"],
+                "body": note["body"],
+                "created_at": note["created_at"],
+            }
+            for note in notes
+        ]
         return ticket
 
     def update_status(self, ticket_id: str, status: str) -> bool:
         with self._connection() as connection:
+            current = connection.execute(
+                "SELECT status FROM tickets WHERE ticket_id = ?", (ticket_id,)
+            ).fetchone()
+            if current is None:
+                return False
             cursor = connection.execute(
                 "UPDATE tickets SET status = ? WHERE ticket_id = ?",
                 (status, ticket_id),
             )
+            if cursor.rowcount:
+                self._insert_event(
+                    connection,
+                    ticket_id,
+                    "local-operator",
+                    "ticket.status_changed",
+                    {"status": current["status"]},
+                    {"status": status},
+                    datetime.now(UTC).isoformat(),
+                )
         return cursor.rowcount > 0
+
+    def save_draft(
+        self,
+        ticket_id: str,
+        body: str,
+        *,
+        draft_id: str | None,
+        operator_id: str,
+        now: str,
+    ) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            exists = connection.execute(
+                "SELECT 1 FROM tickets WHERE ticket_id = ?", (ticket_id,)
+            ).fetchone()
+            if exists is None:
+                return None
+            old_body: str | None = None
+            if draft_id:
+                current = connection.execute(
+                    """SELECT draft_id, body, version, created_at FROM ticket_reply_drafts
+                       WHERE draft_id = ? AND ticket_id = ?""",
+                    (draft_id, ticket_id),
+                ).fetchone()
+                if current is None:
+                    return None
+                old_body = current["body"]
+                version = current["version"]
+                created_at = current["created_at"]
+                connection.execute(
+                    """UPDATE ticket_reply_drafts
+                       SET body = ?, status = 'pending_review', updated_by = ?, updated_at = ?
+                       WHERE draft_id = ?""",
+                    (body, operator_id, now, draft_id),
+                )
+                saved_id = draft_id
+            else:
+                latest = connection.execute(
+                    "SELECT MAX(version) AS version FROM ticket_reply_drafts WHERE ticket_id = ?",
+                    (ticket_id,),
+                ).fetchone()
+                version = int(latest["version"] or 0) + 1
+                saved_id = str(uuid.uuid4())
+                created_at = now
+                connection.execute(
+                    """INSERT INTO ticket_reply_drafts
+                       (draft_id, ticket_id, body, version, status, created_by, updated_by, created_at, updated_at)
+                       VALUES (?, ?, ?, ?, 'pending_review', ?, ?, ?, ?)""",
+                    (saved_id, ticket_id, body, version, operator_id, operator_id, now, now),
+                )
+            connection.execute(
+                "UPDATE tickets SET draft_reply = ? WHERE ticket_id = ?",
+                (body, ticket_id),
+            )
+            self._insert_event(
+                connection,
+                ticket_id,
+                operator_id,
+                "reply.edited" if draft_id else "reply.saved",
+                {"body": old_body} if old_body is not None else None,
+                {"draft_id": saved_id, "body": body, "version": version},
+                now,
+            )
+        return {
+            "id": saved_id,
+            "ticket_id": ticket_id,
+            "body": body,
+            "version": version,
+            "status": "pending_review",
+            "created_at": created_at,
+        }
+
+    def add_operator_note(
+        self,
+        ticket_id: str,
+        body: str,
+        *,
+        operator_id: str,
+        note_id: str,
+        now: str,
+    ) -> dict[str, Any] | None:
+        with self._connection() as connection:
+            exists = connection.execute(
+                "SELECT 1 FROM tickets WHERE ticket_id = ?", (ticket_id,)
+            ).fetchone()
+            if exists is None:
+                return None
+            connection.execute(
+                """INSERT INTO operator_notes (note_id, ticket_id, operator_id, body, created_at)
+                   VALUES (?, ?, ?, ?, ?)""",
+                (note_id, ticket_id, operator_id, body, now),
+            )
+            self._insert_event(connection, ticket_id, operator_id, "operator.note_added", None, {"note_id": note_id}, now)
+        return {"id": note_id, "ticket_id": ticket_id, "operator_id": operator_id, "body": body, "created_at": now}
+
+    def record_decision(
+        self,
+        ticket_id: str,
+        decision: str,
+        *,
+        draft_id: str | None,
+        note: str | None,
+        operator_id: str,
+        now: str,
+    ) -> dict[str, Any] | None:
+        statuses = {
+            "mark_reviewed": "reviewed",
+            "unmark_reviewed": "pending_review",
+            "approve": "approved",
+            "reject": "rejected",
+        }
+        with self._connection() as connection:
+            exists = connection.execute(
+                "SELECT 1 FROM tickets WHERE ticket_id = ?", (ticket_id,)
+            ).fetchone()
+            if exists is None:
+                return None
+            if draft_id:
+                draft = connection.execute(
+                    "SELECT 1 FROM ticket_reply_drafts WHERE draft_id = ? AND ticket_id = ?",
+                    (draft_id, ticket_id),
+                ).fetchone()
+                if draft is None:
+                    return None
+                if decision in statuses:
+                    connection.execute(
+                        """UPDATE ticket_reply_drafts SET status = ?, updated_by = ?, updated_at = ?
+                           WHERE draft_id = ?""",
+                        (statuses[decision], operator_id, now, draft_id),
+                    )
+            self._insert_event(
+                connection,
+                ticket_id,
+                operator_id,
+                f"operator.{decision}",
+                None,
+                {"draft_id": draft_id, "note": note},
+                now,
+            )
+        return {"ticket_id": ticket_id, "decision": decision, "draft_id": draft_id, "created_at": now}
+
+    def list_ticket_events(self, ticket_id: str, limit: int = 50) -> list[dict[str, Any]] | None:
+        with self._connection() as connection:
+            exists = connection.execute(
+                "SELECT 1 FROM tickets WHERE ticket_id = ?", (ticket_id,)
+            ).fetchone()
+            if exists is None:
+                return None
+            rows = connection.execute(
+                """SELECT event_id, operator_id, action, old_value, new_value, created_at
+                   FROM audit_logs WHERE ticket_id = ? ORDER BY created_at DESC LIMIT ?""",
+                (ticket_id, limit),
+            ).fetchall()
+        return [
+            {
+                "id": row["event_id"],
+                "operator_id": row["operator_id"],
+                "action": row["action"],
+                "old_value": json.loads(row["old_value"]) if row["old_value"] else None,
+                "new_value": json.loads(row["new_value"]) if row["new_value"] else None,
+                "created_at": row["created_at"],
+            }
+            for row in rows
+        ]
+
+    @staticmethod
+    def _insert_event(
+        connection: sqlite3.Connection,
+        ticket_id: str,
+        operator_id: str,
+        action: str,
+        old_value: Any,
+        new_value: Any,
+        created_at: str,
+    ) -> None:
+        connection.execute(
+            """INSERT INTO audit_logs
+               (event_id, ticket_id, operator_id, action, old_value, new_value, created_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)""",
+            (
+                str(uuid.uuid4()),
+                ticket_id,
+                operator_id,
+                action,
+                json.dumps(old_value, ensure_ascii=False) if old_value is not None else None,
+                json.dumps(new_value, ensure_ascii=False) if new_value is not None else None,
+                created_at,
+            ),
+        )
 
     def save_analysis(self, ticket_id: str, analysis: dict[str, Any]) -> bool:
         references = analysis["matched_rules"]

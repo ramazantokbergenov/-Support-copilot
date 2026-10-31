@@ -10,6 +10,7 @@ import {
   FileText,
   Inbox,
   LayoutDashboard,
+  LogOut,
   Menu,
   Plus,
   Search,
@@ -35,7 +36,8 @@ import {
   useNavigate,
   useParams,
 } from "react-router-dom";
-import { createTicket } from "../lib/localWorkspace";
+import { createTicket, getHealth } from "../lib/api";
+import { useAuth } from "../context/AuthContext";
 import { useWorkspace } from "../context/WorkspaceContext";
 import { isEscalated } from "../lib/format";
 import type { TicketPriority } from "../types";
@@ -85,6 +87,7 @@ function usePageTitle() {
 
 export function AppShell() {
   const { tickets, refresh } = useWorkspace();
+  const { enabled: authEnabled, session, signOut } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const title = usePageTitle();
@@ -99,6 +102,7 @@ export function AppShell() {
   const [createOpen, setCreateOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [toast, setToast] = useState<{ text: string; tone: string } | null>(null);
+  const [backendOnline, setBackendOnline] = useState<boolean | null>(null);
   const searchRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -141,6 +145,14 @@ export function AppShell() {
     const timer = window.setTimeout(() => setToast(null), 3200);
     return () => window.clearTimeout(timer);
   }, [toast]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    getHealth(controller.signal).then(() => setBackendOnline(true)).catch(() => {
+      if (!controller.signal.aborted) setBackendOnline(false);
+    });
+    return () => controller.abort();
+  }, []);
 
   const showToast = useMemo<Toast>(
     () => (message, tone = "success") => setToast({ text: message, tone }),
@@ -214,20 +226,20 @@ export function AppShell() {
             ))}
           </nav>
           <div className="sidebar-bottom">
-            <div className="connection-card is-online">
+            <div className={`connection-card${backendOnline ? " is-online" : ""}`}>
               <span className="connection-dot" />
               <span className="connection-copy">
-                <strong>Автономный режим</strong>
-                <small>Данные хранятся в браузере</small>
+                <strong>{backendOnline === null ? "Проверяем Backend" : backendOnline ? "Backend подключён" : "Нет соединения"}</strong>
+                <small>{backendOnline ? "Данные синхронизируются" : "Нажмите обновить для повтора"}</small>
               </span>
             </div>
             <div className="profile-card">
-              <span className="profile-avatar">OP</span>
+              <span className="profile-avatar">{session?.user.email?.slice(0, 2).toUpperCase() ?? "OP"}</span>
               <span className="profile-copy">
-                <strong>Оператор</strong>
-                <small>Локальный профиль</small>
+                <strong>{session?.user.email ?? "Оператор"}</strong>
+                <small>{authEnabled ? "Оператор Support" : "Локальный API"}</small>
               </span>
-              <ChevronDown size={15} className="profile-chevron" />
+              {authEnabled ? <IconButton className="profile-chevron" label="Выйти" onClick={() => void signOut()}><LogOut size={15} /></IconButton> : <ChevronDown size={15} className="profile-chevron" />}
             </div>
           </div>
         </aside>
@@ -331,12 +343,22 @@ function CreateTicketDialog({
   const [message, setMessage] = useState("");
   const [category, setCategory] = useState("");
   const [priority, setPriority] = useState<TicketPriority>("Normal");
+  const [attachments, setAttachments] = useState<File[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const { refresh } = useWorkspace();
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (attachments.length > 5 || attachments.some((file) => file.size > 10 * 1024 * 1024) || attachments.reduce((sum, file) => sum + file.size, 0) > 25 * 1024 * 1024) {
+      setError("Можно приложить до 5 файлов, не более 10 МиБ каждый и 25 МиБ суммарно.");
+      return;
+    }
+    const allowedTypes = new Set(["image/jpeg", "image/png", "image/webp", "application/pdf", "text/plain"]);
+    if (attachments.some((file) => !allowedTypes.has(file.type))) {
+      setError("Допустимы JPEG, PNG, WebP, PDF и текстовые файлы.");
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -345,7 +367,7 @@ function CreateTicketDialog({
         message: message.trim(),
         category: category.trim() || undefined,
         priority,
-        attachments: [],
+        attachments,
       });
       await refresh();
       notify("Обращение создано.");
@@ -375,10 +397,10 @@ function CreateTicketDialog({
               </select>
             </label>
             <label className="field-label">Вложения
-              <input disabled type="file" />
+              <input accept="image/jpeg,image/png,image/webp,application/pdf,text/plain" multiple onChange={(event) => setAttachments(Array.from(event.target.files ?? []))} type="file" />
             </label>
           </div>
-          <p className="field-help">Загрузка файлов и AI-анализ требуют backend и временно отключены.</p>
+          <p className="field-help">{attachments.length ? attachments.map((file) => file.name).join(", ") : "До 5 файлов · JPEG, PNG, WebP, PDF или TXT"}</p>
           {error && <div className="inline-error" role="alert">{error}</div>}
           <div className="dialog-actions">
             <button className="button button-secondary" onClick={onClose} type="button">Отмена</button>
